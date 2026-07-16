@@ -193,6 +193,7 @@ def parse_json_ld(soup):
                     "title": rev.get("name", ""),
                     "date": rev.get("datePublished", ""),
                     "rating": rating.get("ratingValue", "") if isinstance(rating, dict) else "",
+                    "summary": rev.get("reviewBody", ""),
                     "text": rev.get("reviewBody", ""),
                 })
     return reviews
@@ -351,6 +352,87 @@ def _main_review_text(card, title_el):
     return ""
 
 
+def _summary_from_lines(card, title):
+    """Fallback when the review summary is not rendered as a simple <p>."""
+    lines = _lines(card)
+    if not lines:
+        return ""
+
+    start = 0
+    if title:
+        for i, line in enumerate(lines):
+            if line.strip('"“”') == title:
+                start = i + 1
+                break
+
+    stop = len(lines)
+    for i in range(start, len(lines)):
+        if lines[i] in ("Pros", "Cons"):
+            stop = i
+            break
+
+    skip_patterns = (
+        r"^overall rating$",
+        r"^ease of use$",
+        r"^features$",
+        r"^value for money$",
+        r"^likelihood to recommend$",
+        r"^review source",
+        r"^used the software for:",
+        r"^\d+(?:\.\d+)?(?:/10)?$",
+    )
+    candidates = []
+    for line in lines[start:stop]:
+        clean = line.strip().strip('"“”')
+        if not clean or clean == title:
+            continue
+        if DATE_RE.search(clean):
+            continue
+        if any(re.search(pattern, clean, re.I) for pattern in skip_patterns):
+            continue
+        if len(clean) < 35:
+            continue
+        candidates.append(clean)
+
+    return max(candidates, key=len) if candidates else ""
+
+
+def _first_present(review, names):
+    lowered = {str(k).lower(): v for k, v in review.items()}
+    for name in names:
+        if name.lower() in lowered and lowered[name.lower()]:
+            return lowered[name.lower()]
+    for key, value in lowered.items():
+        if value and any(key.endswith(name.lower()) for name in names):
+            return value
+    return ""
+
+
+def _canonicalize_review(review):
+    """Expose stable fields even when the source parser uses Capterra/JSON names."""
+    review = dict(review)
+    if not review.get("title"):
+        review["title"] = _first_present(review, ["reviewTitle", "name"])
+    if not review.get("date"):
+        review["date"] = _first_present(review, ["writtenOn", "datePublished", "date"])
+    if not review.get("rating"):
+        review["rating"] = _first_present(review, ["overallRating", "ratingValue", "rating"])
+    if not review.get("summary"):
+        review["summary"] = _first_present(review, [
+            "summary",
+            "generalComments",
+            "reviewText",
+            "reviewBody",
+            "text",
+            "comments",
+        ])
+    if not review.get("pros"):
+        review["pros"] = _first_present(review, ["pros", "prosText"])
+    if not review.get("cons"):
+        review["cons"] = _first_present(review, ["cons", "consText"])
+    return review
+
+
 def parse_html_cards(soup):
     reviews, seen = [], set()
     for label in soup.find_all(string=re.compile(r"^\s*Pros\s*$")):
@@ -367,7 +449,7 @@ def parse_html_cards(soup):
         review = {
             "title": title,
             "date": m_date.group(1) if m_date else "",
-            "summary": _main_review_text(card, title_el),
+            "summary": _main_review_text(card, title_el) or _summary_from_lines(card, title),
             "pros": _section_text(card, "Pros"),
             "cons": _section_text(card, "Cons"),
             "review_source": review_source,
@@ -390,7 +472,7 @@ def parse_page(html):
     for strategy in (parse_html_cards, parse_next_data, parse_json_ld):
         reviews = strategy(soup)
         if reviews:
-            return reviews, strategy.__name__
+            return [_canonicalize_review(review) for review in reviews], strategy.__name__
     return [], None
 
 
