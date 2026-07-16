@@ -4,6 +4,7 @@ import {
   AlertCircle,
   BarChart3,
   Bell,
+  CalendarDays,
   CheckCircle2,
   Database,
   Download,
@@ -15,7 +16,8 @@ import {
   SlidersHorizontal,
   Sparkles,
   Star,
-  TrendingUp,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import "./styles.css";
 
@@ -167,12 +169,12 @@ function exportCsv(reviews) {
   URL.revokeObjectURL(url);
 }
 
-function NavItem({ icon: Icon, label, active }) {
+function NavItem({ icon: Icon, label, active, onClick }) {
   return (
-    <a className={`nav-item ${active ? "active" : ""}`} href="#">
+    <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick} type="button">
       <Icon size={20} />
       <span>{label}</span>
-    </a>
+    </button>
   );
 }
 
@@ -307,6 +309,516 @@ function Stars({ rating }) {
   );
 }
 
+function TopicList({ title, tone, icon: Icon, items }) {
+  return (
+    <section className={`topic-card ${tone}`}>
+      <div className="topic-title">
+        <div className="topic-icon">
+          <Icon size={20} />
+        </div>
+        <h2>{title}</h2>
+      </div>
+      <div className="topic-list">
+        {items.length ? items.map((item) => (
+          <article className="topic-item" key={item.word}>
+            <div className="topic-bullet">{item.count}</div>
+            <div>
+              <strong>{item.word}</strong>
+              <p>{item.detail}</p>
+            </div>
+          </article>
+        )) : (
+          <article className="topic-item">
+            <div className="topic-bullet">0</div>
+            <div>
+              <strong>No data yet</strong>
+              <p>Run the scraper or adjust public Supabase access.</p>
+            </div>
+          </article>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OverviewPage({ reviews, filtered, stats, monthly, keywords, loading, onExport, setActivePage }) {
+  const latest = filtered.slice(0, 5);
+  const maxMonthly = Math.max(1, ...monthly.map((item) => item.count));
+  const positivePct = stats.total ? Math.round((stats.positive / stats.total) * 100) : 0;
+  const negativePct = stats.total ? Math.round((stats.negative / stats.total) * 100) : 0;
+  const pros = keywords.slice(0, 3).map((item) => ({
+    ...item,
+    detail: `Mentioned ${item.count} times across summary, pros, and cons.`,
+  }));
+  const cons = keywords.slice(3, 6).map((item) => ({
+    ...item,
+    detail: `Recurring theme to inspect in the review feed.`,
+  }));
+
+  return (
+    <>
+      <section className="overview-header">
+        <div>
+          <h1>Overview Dashboard</h1>
+          <p>Real-time synthesis of user feedback, review volume, and sentiment trends.</p>
+        </div>
+        <div className="overview-actions">
+          <button className="secondary-button" type="button">
+            <CalendarDays size={17} />
+            All Time
+          </button>
+          <button className="primary-button" onClick={onExport} type="button">
+            <Download size={17} />
+            Export CSV
+          </button>
+        </div>
+      </section>
+
+      <section className="overview-kpis">
+        <Metric label="Overall Rating" value={loading ? "..." : `${stats.average}/5`} detail="average Capterra rating" />
+        <Metric label="Total Reviews" value={loading ? "..." : stats.total} detail="all rows loaded from Supabase" />
+        <Metric label="Sentiment Score" value={loading ? "..." : `${positivePct}%`} detail="reviews rated 4 stars or more" />
+        <section className="metric status-metric">
+          <span>Scrape Status</span>
+          <strong>{loading ? "..." : "Live"}</strong>
+          <small>{reviews.length} records synced</small>
+        </section>
+      </section>
+
+      <section className="overview-grid">
+        <section className="overview-chart panel">
+          <div className="panel-heading spread">
+            <div>
+              <h2>Review Volume</h2>
+              <p className="muted">Monthly ingestion trend</p>
+            </div>
+            <span className="chip">Total Reviews</span>
+          </div>
+          <div className="line-chart" aria-label="Review volume over time">
+            <svg viewBox="0 0 640 240" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="volumeGradient" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor="rgba(70, 72, 212, 0.22)" />
+                  <stop offset="100%" stopColor="rgba(70, 72, 212, 0)" />
+                </linearGradient>
+              </defs>
+              {monthly.length > 1 && (
+                <>
+                  <polyline
+                    fill="none"
+                    points={monthly.slice(-8).map((item, index, arr) => {
+                      const x = (index / Math.max(1, arr.length - 1)) * 640;
+                      const y = 218 - (item.count / maxMonthly) * 178;
+                      return `${x},${y}`;
+                    }).join(" ")}
+                    stroke="#4648d4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="4"
+                  />
+                  <polygon
+                    fill="url(#volumeGradient)"
+                    points={`0,240 ${monthly.slice(-8).map((item, index, arr) => {
+                      const x = (index / Math.max(1, arr.length - 1)) * 640;
+                      const y = 218 - (item.count / maxMonthly) * 178;
+                      return `${x},${y}`;
+                    }).join(" ")} 640,240`}
+                  />
+                </>
+              )}
+            </svg>
+            <div className="axis-labels">
+              {monthly.slice(-6).map((item) => <span key={item.month}>{item.month}</span>)}
+            </div>
+          </div>
+        </section>
+
+        <section className="recent-sentiment panel">
+          <div className="panel-heading">
+            <Sparkles size={18} />
+            <h2>Recent Sentiment</h2>
+          </div>
+          <div className="sentiment-bars">
+            <div>
+              <div className="sentiment-line">
+                <span className="positive-text">Positive</span>
+                <strong>{stats.positive} reviews</strong>
+              </div>
+              <div className="soft-track"><div className="positive-fill" style={{ width: `${positivePct}%` }} /></div>
+            </div>
+            <div>
+              <div className="sentiment-line">
+                <span className="negative-text">Negative</span>
+                <strong>{stats.negative} reviews</strong>
+              </div>
+              <div className="soft-track"><div className="negative-fill" style={{ width: `${negativePct}%` }} /></div>
+            </div>
+          </div>
+          <div className="ai-summary">
+            <Sparkles size={18} />
+            <p><strong>AI Summary:</strong> Overall feedback is led by high-rating reviews, with recurring themes visible in the keyword cloud.</p>
+          </div>
+        </section>
+      </section>
+
+      <section className="topics-grid">
+        <TopicList title="Top Pros" tone="positive" icon={ThumbsUp} items={pros} />
+        <TopicList title="Top Cons" tone="negative" icon={ThumbsDown} items={cons} />
+      </section>
+
+      <section className="latest-table">
+        <div className="section-heading">
+          <div>
+            <p className="overline">Latest synthesized reviews</p>
+            <h2>Recent Reviews</h2>
+          </div>
+          <button className="link-button" onClick={() => setActivePage("reviews")} type="button">View All Reviews</button>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Rating</th>
+                <th>Key Topic</th>
+                <th>Sentiment</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {latest.map((review) => {
+                const data = review.data || {};
+                const sentiment = sentimentForRating(review.rating);
+                return (
+                  <tr key={review.fingerprint}>
+                    <td>{review.reviewer || "Verified Reviewer"}</td>
+                    <td><Stars rating={review.rating} /></td>
+                    <td>{data.reviewer_role || review.title || "Review"}</td>
+                    <td><span className={`sentiment-badge ${sentiment.toLowerCase()}`}>{sentiment}</span></td>
+                    <td>{formatDate(review.review_date)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function SentimentPage({
+  filtered,
+  reviews,
+  stats,
+  distribution,
+  monthly,
+  keywords,
+  loading,
+  error,
+  onExport,
+  ratingFilter,
+  setRatingFilter,
+  sentimentFilter,
+  setSentimentFilter,
+  sortMode,
+  setSortMode,
+}) {
+  return (
+    <>
+      <section className="hero">
+        <div>
+          <span className="status-pill">
+            <Sparkles size={14} />
+            Extracting: Spendesk
+          </span>
+          <h1>Review Intelligence</h1>
+          <p>Analyse publique des retours Capterra, synchronisee depuis Supabase et chargee en integralite.</p>
+        </div>
+        <button className="secondary-button" onClick={onExport}>
+          <Download size={17} />
+          Export CSV
+        </button>
+      </section>
+
+      {error && (
+        <div className="notice" role="alert">
+          <AlertCircle size={18} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <section className="metrics-grid">
+        <Metric label="Reviews loaded" value={loading ? "..." : stats.total} detail="all rows fetched" accent="dark" />
+        <Metric label="Average rating" value={loading ? "..." : stats.average} detail="Capterra score" />
+        <Metric label="Products" value={loading ? "..." : stats.products} detail="unique slugs" />
+        <Metric label="Vendor replies" value={loading ? "..." : stats.withResponse} detail="answered reviews" />
+      </section>
+
+      <section className="insight-grid">
+        <SentimentDonut stats={stats} />
+        <div className="panel keyword-panel">
+          <div className="panel-heading spread">
+            <div>
+              <p className="overline">Voice of customer</p>
+              <h2>Keyword Cloud</h2>
+            </div>
+            <span className="chip">{keywords.length} terms</span>
+          </div>
+          <KeywordCloud words={keywords} />
+        </div>
+        <div className="panel">
+          <div className="panel-heading">
+            <Star size={18} />
+            <h2>Rating Distribution</h2>
+          </div>
+          <RatingBars distribution={distribution} />
+        </div>
+        <div className="panel">
+          <div className="panel-heading">
+            <Database size={18} />
+            <h2>Monthly Volume</h2>
+          </div>
+          <Trend series={monthly} />
+        </div>
+      </section>
+
+      <section className="workspace">
+        <section className="feed">
+          <div className="section-heading">
+            <div>
+              <p className="overline">Review feed</p>
+              <h2>All Reviews</h2>
+            </div>
+            <span>{loading ? "Loading..." : `${filtered.length} shown / ${reviews.length} total`}</span>
+          </div>
+
+          <div className="review-list">
+            {filtered.map((review) => {
+              const data = review.data || {};
+              const sentiment = sentimentForRating(review.rating);
+              return (
+                <article className="review-card" key={review.fingerprint}>
+                  <div className="review-head">
+                    <div className="avatar" aria-hidden="true">
+                      {(review.reviewer || "U").slice(0, 1).toUpperCase()}
+                    </div>
+                    <div>
+                      <h3>{review.reviewer || "Verified Reviewer"}</h3>
+                      <div className="review-meta">
+                        <span>{data.reviewer_role || "Reviewer"}</span>
+                        <span>{formatDate(review.review_date)}</span>
+                      </div>
+                    </div>
+                    <div className="review-rating">
+                      <Stars rating={review.rating} />
+                      <span className={`sentiment-badge ${sentiment.toLowerCase()}`}>{sentiment}</span>
+                    </div>
+                  </div>
+                  <div className="verdict">
+                    <span>Overall verdict</span>
+                    <strong>{review.title || "Untitled review"}</strong>
+                    {data.summary && <p>{data.summary}</p>}
+                  </div>
+                  <div className="pros-cons">
+                    {data.pros && (
+                      <div className="pros">
+                        <span><CheckCircle2 size={15} /> Pros</span>
+                        <p>{data.pros}</p>
+                      </div>
+                    )}
+                    {data.cons && (
+                      <div className="cons">
+                        <span><AlertCircle size={15} /> Cons</span>
+                        <p>{data.cons}</p>
+                      </div>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+            {!loading && filtered.length === 0 && <div className="empty">No reviews match these filters.</div>}
+          </div>
+        </section>
+
+        <aside className="filters">
+          <div className="filter-title">
+            <SlidersHorizontal size={18} />
+            <h2>Filters</h2>
+          </div>
+
+          <label>
+            Rating
+            <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} aria-label="Filter by rating">
+              <option value="all">All ratings</option>
+              <option value="5">5 stars</option>
+              <option value="4">4 stars</option>
+              <option value="3">3 stars</option>
+              <option value="2">2 stars</option>
+              <option value="1">1 star</option>
+            </select>
+          </label>
+
+          <label>
+            Sentiment
+            <select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value)} aria-label="Filter by sentiment">
+              <option value="all">All sentiments</option>
+              <option value="Positive">Positive</option>
+              <option value="Neutral">Neutral</option>
+              <option value="Negative">Negative</option>
+            </select>
+          </label>
+
+          <label>
+            Sort
+            <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort reviews">
+              <option value="date-desc">Newest first</option>
+              <option value="rating-desc">Best rating</option>
+              <option value="rating-asc">Lowest rating</option>
+            </select>
+          </label>
+
+          <div className="scrape-status">
+            <span>Scrape Status</span>
+            <strong>{stats.total}</strong>
+            <small>Total reviews synced</small>
+          </div>
+        </aside>
+      </section>
+    </>
+  );
+}
+
+function ReviewsPage({
+  filtered,
+  reviews,
+  stats,
+  loading,
+  error,
+  onExport,
+  ratingFilter,
+  setRatingFilter,
+  sentimentFilter,
+  setSentimentFilter,
+  sortMode,
+  setSortMode,
+}) {
+  return (
+    <section className="reviews-page">
+      <div className="reviews-main">
+        <section className="reviews-header">
+          <div>
+            <span className="status-pill">Extracting: Spendesk</span>
+            <h1>Review Feed</h1>
+            <p>Latest verified feedback from Capterra users, loaded from Supabase.</p>
+          </div>
+          <button className="secondary-button" onClick={onExport} type="button">
+            <Download size={17} />
+            Export CSV
+          </button>
+        </section>
+
+        {error && (
+          <div className="notice" role="alert">
+            <AlertCircle size={18} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="review-list spacious">
+          {filtered.map((review) => {
+            const data = review.data || {};
+            const sentiment = sentimentForRating(review.rating);
+            return (
+              <article className="review-card large" key={review.fingerprint}>
+                <div className="review-head">
+                  <div className="avatar large-avatar" aria-hidden="true">
+                    {(review.reviewer || "U").slice(0, 1).toUpperCase()}
+                  </div>
+                  <div>
+                    <h3>{review.reviewer || "Verified Reviewer"}</h3>
+                    <div className="review-meta">
+                      <span>{data.reviewer_role || data.reviewer_industry || "Capterra reviewer"}</span>
+                      <span>{formatDate(review.review_date)}</span>
+                    </div>
+                  </div>
+                  <div className="review-rating">
+                    <Stars rating={review.rating} />
+                    <span className={`sentiment-badge ${sentiment.toLowerCase()}`}>{sentiment}</span>
+                  </div>
+                </div>
+
+                <div className="verdict featured">
+                  <span>Overall verdict</span>
+                  <strong>{review.title || "Untitled review"}</strong>
+                  {data.summary && <p>{data.summary}</p>}
+                </div>
+
+                <div className="pros-cons">
+                  <div className="pros">
+                    <span><CheckCircle2 size={15} /> Pros</span>
+                    <p>{data.pros || "No pros extracted for this review."}</p>
+                  </div>
+                  <div className="cons">
+                    <span><AlertCircle size={15} /> Cons</span>
+                    <p>{data.cons || "No cons extracted for this review."}</p>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+          {!loading && filtered.length === 0 && <div className="empty">No reviews match these filters.</div>}
+          {loading && <div className="empty">Loading reviews...</div>}
+        </div>
+      </div>
+
+      <aside className="reviews-filter-panel">
+        <div className="filter-title">
+          <SlidersHorizontal size={18} />
+          <h2>Filters</h2>
+        </div>
+
+        <label>
+          Filter by Rating
+          <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} aria-label="Filter by rating">
+            <option value="all">All ratings</option>
+            <option value="5">5 stars</option>
+            <option value="4">4 stars</option>
+            <option value="3">3 stars</option>
+            <option value="2">2 stars</option>
+            <option value="1">1 star</option>
+          </select>
+        </label>
+
+        <label>
+          Sentiment Analysis
+          <select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value)} aria-label="Filter by sentiment">
+            <option value="all">All sentiments</option>
+            <option value="Positive">Positive</option>
+            <option value="Neutral">Neutral</option>
+            <option value="Negative">Negative</option>
+          </select>
+        </label>
+
+        <label>
+          Sort
+          <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort reviews">
+            <option value="date-desc">Newest first</option>
+            <option value="rating-desc">Best rating</option>
+            <option value="rating-asc">Lowest rating</option>
+          </select>
+        </label>
+
+        <div className="scrape-status">
+          <span>Scrape Status</span>
+          <strong>{stats.total}</strong>
+          <small>{loading ? "Loading..." : `${filtered.length} reviews shown`}</small>
+        </div>
+      </aside>
+    </section>
+  );
+}
+
 function App() {
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -315,6 +827,7 @@ function App() {
   const [ratingFilter, setRatingFilter] = useState("all");
   const [sentimentFilter, setSentimentFilter] = useState("all");
   const [sortMode, setSortMode] = useState("date-desc");
+  const [activePage, setActivePage] = useState("overview");
 
   async function load() {
     setLoading(true);
@@ -371,6 +884,24 @@ function App() {
   const monthly = useMemo(() => buildMonthlySeries(reviews), [reviews]);
   const keywords = useMemo(() => getKeywordCloud(reviews), [reviews]);
 
+  const sharedReviewProps = {
+    filtered,
+    reviews,
+    stats,
+    distribution,
+    monthly,
+    keywords,
+    loading,
+    error,
+    onExport: () => exportCsv(filtered),
+    ratingFilter,
+    setRatingFilter,
+    sentimentFilter,
+    setSentimentFilter,
+    sortMode,
+    setSortMode,
+  };
+
   return (
     <div className="app-shell">
       <aside className="side-nav">
@@ -379,13 +910,12 @@ function App() {
           <small>Capterra Analytics</small>
         </div>
         <nav>
-          <NavItem icon={LayoutDashboard} label="Overview" />
-          <NavItem icon={BarChart3} label="Sentiment" active />
-          <NavItem icon={MessageSquareText} label="Reviews" active />
-          <NavItem icon={TrendingUp} label="Trends" />
+          <NavItem icon={LayoutDashboard} label="Overview" active={activePage === "overview"} onClick={() => setActivePage("overview")} />
+          <NavItem icon={BarChart3} label="Sentiment" active={activePage === "sentiment"} onClick={() => setActivePage("sentiment")} />
+          <NavItem icon={MessageSquareText} label="Reviews" active={activePage === "reviews"} onClick={() => setActivePage("reviews")} />
         </nav>
         <div className="nav-footer">
-          <NavItem icon={Settings} label="Settings" />
+          <NavItem icon={Settings} label="Settings" active={false} onClick={() => setActivePage("overview")} />
         </div>
       </aside>
 
@@ -406,165 +936,28 @@ function App() {
       </header>
 
       <main className="content">
-        <section className="hero">
-          <div>
-            <span className="status-pill">
-              <Sparkles size={14} />
-              Extracting: Spendesk
-            </span>
-            <h1>Review Intelligence</h1>
-            <p>Analyse publique des retours Capterra, synchronisee depuis Supabase et chargee en integralite.</p>
-          </div>
-          <button className="secondary-button" onClick={() => exportCsv(filtered)}>
-            <Download size={17} />
-            Export CSV
-          </button>
-        </section>
-
-        {error && (
+        {error && activePage === "overview" && (
           <div className="notice" role="alert">
             <AlertCircle size={18} />
             <span>{error}</span>
           </div>
         )}
-
-        <section className="metrics-grid">
-          <Metric label="Reviews loaded" value={loading ? "..." : stats.total} detail="all rows fetched" accent="dark" />
-          <Metric label="Average rating" value={loading ? "..." : stats.average} detail="Capterra score" />
-          <Metric label="Products" value={loading ? "..." : stats.products} detail="unique slugs" />
-          <Metric label="Vendor replies" value={loading ? "..." : stats.withResponse} detail="answered reviews" />
-        </section>
-
-        <section className="insight-grid">
-          <SentimentDonut stats={stats} />
-          <div className="panel keyword-panel">
-            <div className="panel-heading spread">
-              <div>
-                <p className="overline">Voice of customer</p>
-                <h2>Keyword Cloud</h2>
-              </div>
-              <span className="chip">{keywords.length} terms</span>
-            </div>
-            <KeywordCloud words={keywords} />
-          </div>
-          <div className="panel">
-            <div className="panel-heading">
-              <Star size={18} />
-              <h2>Rating Distribution</h2>
-            </div>
-            <RatingBars distribution={distribution} />
-          </div>
-          <div className="panel">
-            <div className="panel-heading">
-              <Database size={18} />
-              <h2>Monthly Volume</h2>
-            </div>
-            <Trend series={monthly} />
-          </div>
-        </section>
-
-        <section className="workspace">
-          <section className="feed">
-            <div className="section-heading">
-              <div>
-                <p className="overline">Review feed</p>
-                <h2>All Reviews</h2>
-              </div>
-              <span>{loading ? "Loading..." : `${filtered.length} shown / ${reviews.length} total`}</span>
-            </div>
-
-            <div className="review-list">
-              {filtered.map((review) => {
-                const data = review.data || {};
-                const sentiment = sentimentForRating(review.rating);
-                return (
-                  <article className="review-card" key={review.fingerprint}>
-                    <div className="review-head">
-                      <div className="avatar" aria-hidden="true">
-                        {(review.reviewer || "U").slice(0, 1).toUpperCase()}
-                      </div>
-                      <div>
-                        <h3>{review.reviewer || "Verified Reviewer"}</h3>
-                        <div className="review-meta">
-                          <span>{data.reviewer_role || "Reviewer"}</span>
-                          <span>{formatDate(review.review_date)}</span>
-                        </div>
-                      </div>
-                      <div className="review-rating">
-                        <Stars rating={review.rating} />
-                        <span className={`sentiment-badge ${sentiment.toLowerCase()}`}>{sentiment}</span>
-                      </div>
-                    </div>
-                    <div className="verdict">
-                      <span>Overall verdict</span>
-                      <strong>{review.title || "Untitled review"}</strong>
-                      {data.summary && <p>{data.summary}</p>}
-                    </div>
-                    <div className="pros-cons">
-                      {data.pros && (
-                        <div className="pros">
-                          <span><CheckCircle2 size={15} /> Pros</span>
-                          <p>{data.pros}</p>
-                        </div>
-                      )}
-                      {data.cons && (
-                        <div className="cons">
-                          <span><AlertCircle size={15} /> Cons</span>
-                          <p>{data.cons}</p>
-                        </div>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-              {!loading && filtered.length === 0 && <div className="empty">No reviews match these filters.</div>}
-            </div>
-          </section>
-
-          <aside className="filters">
-            <div className="filter-title">
-              <SlidersHorizontal size={18} />
-              <h2>Filters</h2>
-            </div>
-
-            <label>
-              Rating
-              <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} aria-label="Filter by rating">
-                <option value="all">All ratings</option>
-                <option value="5">5 stars</option>
-                <option value="4">4 stars</option>
-                <option value="3">3 stars</option>
-                <option value="2">2 stars</option>
-                <option value="1">1 star</option>
-              </select>
-            </label>
-
-            <label>
-              Sentiment
-              <select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value)} aria-label="Filter by sentiment">
-                <option value="all">All sentiments</option>
-                <option value="Positive">Positive</option>
-                <option value="Neutral">Neutral</option>
-                <option value="Negative">Negative</option>
-              </select>
-            </label>
-
-            <label>
-              Sort
-              <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort reviews">
-                <option value="date-desc">Newest first</option>
-                <option value="rating-desc">Best rating</option>
-                <option value="rating-asc">Lowest rating</option>
-              </select>
-            </label>
-
-            <div className="scrape-status">
-              <span>Scrape Status</span>
-              <strong>{stats.total}</strong>
-              <small>Total reviews synced</small>
-            </div>
-          </aside>
-        </section>
+        {activePage === "overview" ? (
+          <OverviewPage
+            reviews={reviews}
+            filtered={filtered}
+            stats={stats}
+            monthly={monthly}
+            keywords={keywords}
+            loading={loading}
+            onExport={() => exportCsv(filtered)}
+            setActivePage={setActivePage}
+          />
+        ) : activePage === "reviews" ? (
+          <ReviewsPage {...sharedReviewProps} />
+        ) : (
+          <SentimentPage {...sharedReviewProps} />
+        )}
       </main>
     </div>
   );
