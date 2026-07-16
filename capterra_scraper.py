@@ -399,7 +399,10 @@ def _summary_from_lines(card, title):
         return any(re.search(pattern, clean, re.I) for pattern in boundary_patterns)
 
     def is_summary_line(line):
-        clean = line.strip().strip('"“”')
+        raw = line.strip()
+        if raw.startswith(('"', "“", "”")):
+            return False
+        clean = raw.strip('"“”')
         if len(clean) < 28:
             return False
         if title and clean == title:
@@ -437,6 +440,40 @@ def _summary_from_lines(card, title):
     return " ".join(candidates[:2]) if candidates else ""
 
 
+def _clean_summary(value):
+    summary = _clean_text(str(value or ""))
+    if not summary:
+        return ""
+
+    # In Capterra's expanded cards, quoted lines are usually review titles.
+    # When a captured "summary" starts there, it often means the parser swallowed
+    # the title + ratings + Pros/Cons block, so keeping it is worse than blank.
+    if summary.startswith(('"', "“", "”")):
+        return ""
+
+    hard_markers = (
+        "Overall Rating",
+        "Ease of Use",
+        "Customer Service",
+        "Likelihood to Recommend",
+        "Positive icon",
+        "Negative icon",
+        "Review Source",
+        "Response from",
+        "View less",
+    )
+    if any(marker in summary for marker in hard_markers):
+        return ""
+
+    for marker in (" Pros ", " Cons ", "\nPros", "\nCons"):
+        if marker in summary:
+            summary = summary.split(marker, 1)[0].strip()
+
+    if len(summary) > 700:
+        return ""
+    return summary
+
+
 def _first_present(review, names):
     lowered = {str(k).lower(): v for k, v in review.items()}
     for name in names:
@@ -466,6 +503,7 @@ def _canonicalize_review(review):
             "text",
             "comments",
         ])
+    review["summary"] = _clean_summary(review.get("summary", ""))
     if not review.get("pros"):
         review["pros"] = _first_present(review, ["pros", "prosText"])
     if not review.get("cons"):
