@@ -358,43 +358,82 @@ def _summary_from_lines(card, title):
     if not lines:
         return ""
 
-    start = 0
+    title_idx = -1
     if title:
         for i, line in enumerate(lines):
             if line.strip('"“”') == title:
-                start = i + 1
+                title_idx = i
                 break
 
+    boundary_patterns = (
+        r"^pros$",
+        r"^cons$",
+        r"^positive icon$",
+        r"^negative icon$",
+        r"^continue reading$",
+        r"^view less$",
+        r"^overall rating$",
+        r"^ease of use$",
+        r"^customer service$",
+        r"^features$",
+        r"^value for money$",
+        r"^likelihood to recommend$",
+        r"^review source",
+        r"^response from\s+",
+        r"^used the software for:",
+        r"^alternatives considered$",
+        r"^reason for choosing",
+        r"^switched from$",
+        r"^\d+(?:\.\d+)?(?:/10)?$",
+        r"^\d+\s*%$",
+        r"^\d+$",
+    )
+
+    def is_boundary(line):
+        clean = line.strip().strip('"“”')
+        if not clean:
+            return True
+        if DATE_RE.search(clean):
+            return True
+        return any(re.search(pattern, clean, re.I) for pattern in boundary_patterns)
+
+    def is_summary_line(line):
+        clean = line.strip().strip('"“”')
+        if len(clean) < 28:
+            return False
+        if title and clean == title:
+            return False
+        if is_boundary(clean):
+            return False
+        return True
+
+    if title_idx > 0:
+        before = []
+        for line in reversed(lines[:title_idx]):
+            clean = line.strip().strip('"“”')
+            if is_boundary(clean):
+                break
+            if is_summary_line(clean):
+                before.append(clean)
+        before.reverse()
+        if before:
+            return " ".join(before)
+
+    start = title_idx + 1 if title_idx >= 0 else 0
     stop = len(lines)
     for i in range(start, len(lines)):
         if lines[i] in ("Pros", "Cons"):
             stop = i
             break
 
-    skip_patterns = (
-        r"^overall rating$",
-        r"^ease of use$",
-        r"^features$",
-        r"^value for money$",
-        r"^likelihood to recommend$",
-        r"^review source",
-        r"^used the software for:",
-        r"^\d+(?:\.\d+)?(?:/10)?$",
-    )
     candidates = []
     for line in lines[start:stop]:
         clean = line.strip().strip('"“”')
-        if not clean or clean == title:
-            continue
-        if DATE_RE.search(clean):
-            continue
-        if any(re.search(pattern, clean, re.I) for pattern in skip_patterns):
-            continue
-        if len(clean) < 35:
+        if not is_summary_line(clean):
             continue
         candidates.append(clean)
 
-    return max(candidates, key=len) if candidates else ""
+    return " ".join(candidates[:2]) if candidates else ""
 
 
 def _first_present(review, names):
