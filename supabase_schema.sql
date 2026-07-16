@@ -36,3 +36,16 @@ create trigger set_capterra_reviews_updated_at
 before update on public.capterra_reviews
 for each row
 execute function public.set_updated_at();
+
+alter table public.capterra_reviews enable row level security;
+
+drop policy if exists "Public read capterra reviews" on public.capterra_reviews;
+
+create policy "Public read capterra reviews"
+on public.capterra_reviews
+for select
+to anon
+using (true);
+
+grant usage on schema public to anon;
+grant select on public.capterra_reviews to anon;

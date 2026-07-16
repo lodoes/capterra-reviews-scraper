@@ -71,6 +71,40 @@ python capterra_scraper.py --headless --supabase
 
 La table par defaut est `capterra_reviews`. Chaque avis est upsert via un `fingerprint` unique, avec l'avis complet stocke dans la colonne JSONB `data`.
 
+## Front analytics public
+
+Le dossier `frontend/` contient un dashboard React public qui lit Supabase et charge toutes les reviews par pagination, pas seulement les dernieres.
+
+Variables d'environnement du front :
+
+```text
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=ta_cle_anon_publique
+VITE_SUPABASE_TABLE=capterra_reviews
+```
+
+N'utilise jamais la service role key dans le front.
+
+Pour le lancer en local :
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Pour Render.com :
+
+1. Cree un **Static Site**.
+2. Connecte ce repo GitHub.
+3. Utilise :
+   - Root Directory: `frontend`
+   - Build Command: `npm install && npm run build`
+   - Publish Directory: `dist`
+4. Ajoute les variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_SUPABASE_TABLE`.
+
+Le fichier `render.yaml` contient aussi une configuration Blueprint equivalente.
+
 ## Google Cloud Run Jobs
 
 Pour Google Cloud, utilise **Cloud Run Jobs**, pas un Cloud Run Service.

@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: capterra-reviews-analytics
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist

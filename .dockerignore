@@ -1,5 +1,6 @@
 .git/
 .github/
+frontend/
 __pycache__/
 *.py[cod]
 

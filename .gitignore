@@ -8,6 +8,9 @@ debug/
 .env
 .venv/
 venv/
+frontend/node_modules/
+frontend/dist/
+frontend/.npm-cache/
 
 *.log
 *.tmp
