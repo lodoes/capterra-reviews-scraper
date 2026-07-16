@@ -1,0 +1,16 @@
+.git/
+.github/
+__pycache__/
+*.py[cod]
+
+resultats/
+downloaded_files/
+debug/
+
+.env
+.venv/
+venv/
+
+*.log
+*.tmp
+.~lock.*

@@ -70,3 +70,41 @@ python capterra_scraper.py --headless --supabase
 ```
 
 La table par defaut est `capterra_reviews`. Chaque avis est upsert via un `fingerprint` unique, avec l'avis complet stocke dans la colonne JSONB `data`.
+
+## Google Cloud Run Jobs
+
+Pour Google Cloud, utilise **Cloud Run Jobs**, pas un Cloud Run Service.
+
+Le scraper est une tache batch : il demarre, scrape, stocke dans Supabase, puis s'arrete. Un Cloud Run Service attendrait une app HTTP qui ecoute sur `$PORT`, ce qui n'est pas le cas ici.
+
+Le repo contient un `Dockerfile` qui installe Chromium pour SeleniumBase.
+
+Exemple de build :
+
+```bash
+gcloud builds submit --tag gcr.io/PROJECT_ID/capterra-reviews-scraper
+```
+
+Creation du job :
+
+```bash
+gcloud secrets create supabase-service-role-key --data-file=-
+
+gcloud run jobs create capterra-reviews-scraper \
+  --image gcr.io/PROJECT_ID/capterra-reviews-scraper \
+  --region europe-west1 \
+  --set-env-vars SUPABASE_URL=https://xxxx.supabase.co \
+  --set-secrets SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest
+```
+
+Execution :
+
+```bash
+gcloud run jobs execute capterra-reviews-scraper --region europe-west1
+```
+
+Pour tester seulement 2 pages, surcharge la commande du job avec :
+
+```bash
+python capterra_scraper.py --headless --supabase --max-pages 2 --out /tmp/resultats
+```
