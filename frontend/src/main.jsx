@@ -14,10 +14,21 @@ function asNumber(value) {
 }
 
 function formatDate(value) {
-    if (!value) return "";
-    const parsed = new Date(value);
+    const parsed = parseReviewDate(value);
     if (Number.isNaN(parsed.getTime())) return value;
     return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" });
+}
+
+function parseReviewDate(value) {
+    if (!value) return new Date(NaN);
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return parsed;
+}
+
+function dateInputValue(date) {
+    if (!date || Number.isNaN(date.getTime())) return "";
+    return date.toISOString().slice(0, 10);
 }
 
 function sentimentForRating(value) {
@@ -32,6 +43,10 @@ function reviewText(review) {
     const data = review.data || {};
     return [review.title, review.reviewer, data.summary, data.pros, data.cons, data.reviewer_role, data.reviewer_industry]
         .filter(Boolean).join(" ").toLowerCase();
+}
+
+function isFilterableReview(review) {
+    return asNumber(review.rating) !== null && !Number.isNaN(parseReviewDate(review.review_date_iso || review.review_date || review.created_at).getTime());
 }
 
 async function fetchAllReviews() {
@@ -71,7 +86,7 @@ function getKeywords(reviews) {
 function getMonthly(reviews) {
     const buckets = new Map();
     for (const review of reviews) {
-        const parsed = new Date(review.review_date || review.created_at);
+        const parsed = new Date(review.review_date_iso || review.review_date || review.created_at);
         if (Number.isNaN(parsed.getTime())) continue;
         const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
         buckets.set(key, (buckets.get(key) || 0) + 1);
@@ -99,18 +114,52 @@ function InsightsProvider({ children }) {
     const [reviews, setReviews] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [query, setQuery] = useState("");
+    const [ratingFilter, setRatingFilter] = useState("all");
+    const [sentimentFilter, setSentimentFilter] = useState("all");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
     useEffect(() => {
         fetchAllReviews().then(setReviews).catch((err) => setError(err.message || String(err))).finally(() => setLoading(false));
     }, []);
     const value = useMemo(() => {
+        const datedReviews = reviews
+            .map((review) => ({ review, date: parseReviewDate(review.review_date || review.created_at) }))
+            .filter((item) => !Number.isNaN(item.date.getTime()));
+        const minDate = datedReviews.length ? new Date(Math.min(...datedReviews.map((item) => item.date.getTime()))) : null;
+        const maxDate = datedReviews.length ? new Date(Math.max(...datedReviews.map((item) => item.date.getTime()))) : null;
+        const fromDate = dateFrom ? parseReviewDate(dateFrom) : null;
+        const toDate = dateTo ? parseReviewDate(dateTo) : null;
+        if (toDate && !Number.isNaN(toDate.getTime())) {
+            toDate.setHours(23, 59, 59, 999);
+        }
+        const q = query.trim().toLowerCase();
+        const filteredReviews = reviews.filter((review) => {
+            const rating = asNumber(review.rating);
+            const reviewDate = parseReviewDate(review.review_date_iso || review.review_date || review.created_at);
+            const matchesSearch = !q || reviewText(review).includes(q);
+            const matchesRating = ratingFilter === "all" || Math.round(rating || 0) === Number(ratingFilter);
+            const matchesSentiment = sentimentFilter === "all" || sentimentForRating(review.rating) === sentimentFilter;
+            const matchesFrom = !fromDate || Number.isNaN(fromDate.getTime()) || (!Number.isNaN(reviewDate.getTime()) && reviewDate >= fromDate);
+            const matchesTo = !toDate || Number.isNaN(toDate.getTime()) || (!Number.isNaN(reviewDate.getTime()) && reviewDate <= toDate);
+            return matchesSearch && matchesRating && matchesSentiment && matchesFrom && matchesTo;
+        });
+        const filterableCount = reviews.filter(isFilterableReview).length;
         const ratings = reviews.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
+        const scopedRatings = filteredReviews.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
         const avg = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
+        const scopedAvg = scopedRatings.length ? scopedRatings.reduce((sum, rating) => sum + rating, 0) / scopedRatings.length : 0;
         const positive = reviews.filter((review) => sentimentForRating(review.rating) === "Positive").length;
         const neutral = reviews.filter((review) => sentimentForRating(review.rating) === "Neutral").length;
         const negative = reviews.filter((review) => sentimentForRating(review.rating) === "Negative").length;
+        const scopedPositive = filteredReviews.filter((review) => sentimentForRating(review.rating) === "Positive").length;
+        const scopedNeutral = filteredReviews.filter((review) => sentimentForRating(review.rating) === "Neutral").length;
+        const scopedNegative = filteredReviews.filter((review) => sentimentForRating(review.rating) === "Negative").length;
         const positivePct = reviews.length ? Math.round((positive / reviews.length) * 100) : 0;
         const negativePct = reviews.length ? Math.round((negative / reviews.length) * 100) : 0;
-        const keywords = getKeywords(reviews);
+        const scopedPositivePct = filteredReviews.length ? Math.round((scopedPositive / filteredReviews.length) * 100) : 0;
+        const scopedNegativePct = filteredReviews.length ? Math.round((scopedNegative / filteredReviews.length) * 100) : 0;
+        const keywords = getKeywords(filteredReviews);
         const fallbackPros = [
             { icon: "speed", title: "User Interface Speed", desc: "Users consistently praise the responsiveness and fast loading times of the dashboards." },
             { icon: "account_balance_wallet", title: "Card Management", desc: "The ease of creating and disabling virtual cards is a major high point for finance teams." },
@@ -123,29 +172,56 @@ function InsightsProvider({ children }) {
         ];
         return {
             reviews,
+            filteredReviews,
             loading,
             error,
+            query,
+            setQuery,
+            ratingFilter,
+            setRatingFilter,
+            sentimentFilter,
+            setSentimentFilter,
+            dateFrom,
+            setDateFrom,
+            dateTo,
+            setDateTo,
+            minDate,
+            maxDate,
             keywords,
             monthly: getMonthly(reviews),
-            topPros: buildHighlights(reviews, "pros", fallbackPros),
-            topCons: buildHighlights(reviews, "cons", fallbackCons),
-            categoryRows: buildCategoryRows(reviews),
+            topPros: buildHighlights(filteredReviews, "pros", fallbackPros),
+            topCons: buildHighlights(filteredReviews, "cons", fallbackCons),
+            categoryRows: buildCategoryRows(filteredReviews),
             analytics: {
                 total: reviews.length,
+                filtered: filteredReviews.length,
+                filterable: filterableCount,
+                unfilterable: Math.max(0, reviews.length - filterableCount),
                 totalLabel: reviews.length.toLocaleString("en-US"),
+                filteredLabel: filteredReviews.length.toLocaleString("en-US"),
+                filterableLabel: filterableCount.toLocaleString("en-US"),
                 average: avg ? avg.toFixed(1) : "0.0",
+                scopedAverage: scopedAvg ? scopedAvg.toFixed(1) : "0.0",
                 positive,
                 neutral,
                 negative,
+                scopedPositive,
+                scopedNeutral,
+                scopedNegative,
                 positivePct,
                 neutralPct: reviews.length ? Math.round((neutral / reviews.length) * 100) : 0,
                 negativePct,
+                scopedPositivePct,
+                scopedNeutralPct: filteredReviews.length ? Math.round((scopedNeutral / filteredReviews.length) * 100) : 0,
+                scopedNegativePct,
                 positivePctLabel: `${positivePct}%`,
                 negativePctLabel: `${negativePct}%`,
+                scopedPositivePctLabel: `${scopedPositivePct}%`,
+                scopedNegativePctLabel: `${scopedNegativePct}%`,
                 statusLabel: loading ? "Loading" : "Live Sync",
             },
         };
-    }, [reviews, loading, error]);
+    }, [reviews, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
     return <InsightsContext.Provider value={value}>{children}</InsightsContext.Provider>;
 }
 
@@ -158,7 +234,7 @@ function reviewToCard(review, idx) {
     return {
         name: review.reviewer || "Verified Reviewer",
         role: data.reviewer_role || data.reviewer_industry || "Capterra reviewer",
-        date: formatDate(review.review_date),
+        date: formatDate(review.review_date_iso || review.review_date),
         img: `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(review.reviewer || `review-${idx}`)}`,
         rating: Math.round(asNumber(review.rating) || 0),
         sentiment: sentimentForRating(review.rating),
@@ -178,15 +254,26 @@ function buildHighlights(reviews, field, fallbackItems) {
     const icons = field === "pros"
         ? ["speed", "account_balance_wallet", "integration_instructions"]
         : ["euro", "receipt_long", "notifications_active"];
-    const source = reviews
-        .map((review) => review.data?.[field])
-        .filter((text) => text && String(text).trim().length > 35)
-        .slice(0, 3);
+    const stop = new Set("the and for with that this from are you your our can was very have has but not all more use using easy great good spendesk les des une pour dans avec est pas sur nous vous tres très outil avis simple utilisation software system platform".split(" "));
+    const counts = new Map();
+    const examples = new Map();
+    for (const review of reviews) {
+        const text = String(review.data?.[field] || "");
+        if (!text || text.length < 25) continue;
+        const words = text.toLowerCase().match(/[a-zÀ-ÿ][a-zÀ-ÿ'-]{3,}/g) || [];
+        for (const raw of words) {
+            const word = raw.replace(/^['-]+|['-]+$/g, "");
+            if (stop.has(word)) continue;
+            counts.set(word, (counts.get(word) || 0) + 1);
+            if (!examples.has(word)) examples.set(word, text);
+        }
+    }
+    const source = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
     if (!source.length) return fallbackItems;
-    return source.map((text, idx) => ({
+    return source.map(([word, count], idx) => ({
         icon: icons[idx % icons.length],
-        title: field === "pros" ? `Recurring advantage #${idx + 1}` : `Recurring friction #${idx + 1}`,
-        desc: compactText(text, ""),
+        title: `${word.replace(/^\w/, (c) => c.toUpperCase())} (${count} mentions)`,
+        desc: compactText(examples.get(word), ""),
     }));
 }
 
@@ -195,7 +282,6 @@ function buildCategoryRows(reviews) {
         { cat: "Features", words: ["feature", "features", "card", "virtual", "workflow", "approval"], quote: '"Virtual cards and automated approvals are top tier."' },
         { cat: "Pricing", words: ["price", "pricing", "cost", "expensive", "plan", "value", "money"], quote: '"Value is high, but entry price is steep for SMBs."' },
         { cat: "Ease of Use", words: ["easy", "simple", "intuitive", "facile", "ux", "quick", "fast"], quote: '"Incredibly intuitive UX, almost zero learning curve."' },
-        { cat: "Support", words: ["support", "customer", "service", "response", "help"], quote: '"Support quality remains an important operational signal."' },
     ];
     return specs.map((spec) => {
         const matched = reviews.filter((review) => spec.words.some((word) => reviewText(review).includes(word)));
@@ -223,8 +309,7 @@ function buildCategoryRows(reviews) {
     const navItems = [
         { path: 'overview', label: 'Overview', icon: 'dashboard' },
         { path: 'sentiment', label: 'Sentiment', icon: 'analytics' },
-        { path: 'reviews', label: 'Reviews', icon: 'forum' },
-        { path: 'trends', label: 'Trends', icon: 'trending_up' }
+        { path: 'reviews', label: 'Reviews', icon: 'forum' }
     ];
 
     return (
@@ -253,27 +338,18 @@ function buildCategoryRows(reviews) {
                     </button>
                 ))}
             </nav>
-            <div className="mt-auto px-4 space-y-1 border-t border-outline-variant pt-6">
-                <a className="flex items-center gap-3 px-4 py-3 transition-all duration-200 text-on-surface-variant hover:bg-surface-container-low hover:text-primary rounded-xl" href="#">
-                    <span className="material-symbols-outlined">settings</span>
-                    <span className="text-label-md">Settings</span>
-                </a>
-                <a className="flex items-center gap-3 px-4 py-3 transition-all duration-200 text-on-surface-variant hover:bg-surface-container-low hover:text-primary rounded-xl" href="#">
-                    <span className="material-symbols-outlined">help</span>
-                    <span className="text-label-md">Support</span>
-                </a>
-            </div>
         </aside>
     );
 };
 
         const TopBar = ({ title = "Search insights..." }) => {
+            const { query, setQuery } = useInsights();
             return (
                 <header className="w-full h-20 fixed top-0 z-40 bg-surface/80 backdrop-blur-md flex justify-between items-center px-lg ml-64 max-w-[calc(100%-16rem)]">
                     <div className="flex items-center flex-1 max-w-xl">
                         <div className="relative w-full">
                             <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
-                            <input className="w-full bg-surface-container-low border-none rounded-full pl-12 pr-6 py-2.5 text-label-md focus:ring-2 focus:ring-secondary/20 transition-all" placeholder={title} type="text"/>
+                            <input value={query} onChange={(event) => setQuery(event.target.value)} className="w-full bg-surface-container-low border-none rounded-full pl-12 pr-6 py-2.5 text-label-md focus:ring-2 focus:ring-secondary/20 transition-all" placeholder={title} type="text"/>
                         </div>
                     </div>
                     <div className="flex items-center gap-6">
@@ -300,7 +376,13 @@ function buildCategoryRows(reviews) {
         // --- Pages ---
 
         const OverviewPage = () => {
-            const { analytics, topPros, topCons } = useInsights();
+            const { analytics, topPros, topCons, monthly, dateFrom, setDateFrom, dateTo, setDateTo, minDate, maxDate } = useInsights();
+            const maxMonthly = Math.max(1, ...monthly.map((item) => item.count));
+            const points = monthly.map((item, index) => {
+                const x = monthly.length <= 1 ? 600 : (index / (monthly.length - 1)) * 600;
+                const y = 190 - (item.count / maxMonthly) * 150;
+                return `${x},${y}`;
+            }).join(" ");
             return (
                 <div className="animate-fade-in">
                     <TopBar />
@@ -309,13 +391,15 @@ function buildCategoryRows(reviews) {
                             <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-4">
                                 <div>
                                     <h2 className="text-display font-extrabold text-primary mb-1">Overview Dashboard</h2>
-                                    <p className="text-on-surface-variant text-body-lg">Real-time synthesis of user feedback and sentiment trends.</p>
+                                    <p className="text-on-surface-variant text-body-lg">Real-time synthesis of user feedback and sentiment signals.</p>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                    <button className="flex items-center gap-2 px-6 py-3 border border-outline-variant text-on-surface font-label-md rounded-full hover:bg-surface-container-low transition-all">
+                                    <div className="flex items-center gap-2 px-4 py-3 border border-outline-variant text-on-surface font-label-md rounded-full hover:bg-surface-container-low transition-all">
                                         <span className="material-symbols-outlined text-[20px]">calendar_today</span>
-                                        Last 30 Days
-                                    </button>
+                                        <input className="bg-transparent w-32 outline-none" type="date" value={dateFrom} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateFrom(event.target.value)} />
+                                        <span className="text-on-surface-variant">to</span>
+                                        <input className="bg-transparent w-32 outline-none" type="date" value={dateTo} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateTo(event.target.value)} />
+                                    </div>
                                     <button className="flex items-center gap-2 px-6 py-3 bg-secondary text-white font-label-md rounded-full shadow-lg shadow-secondary/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
                                         <span className="material-symbols-outlined text-[20px]">download</span>
                                         Export PDF
@@ -332,7 +416,7 @@ function buildCategoryRows(reviews) {
                                         </div>
                                     </div>
                                     <div className="flex items-baseline gap-2">
-                                        <span className="text-display text-primary">{analytics.average}</span>
+                                        <span className="text-display text-primary">{analytics.scopedAverage}</span>
                                         <span className="text-on-surface-variant text-body-md">/ 5</span>
                                     </div>
                                     <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
@@ -347,7 +431,7 @@ function buildCategoryRows(reviews) {
                                             <span className="material-symbols-outlined text-secondary text-[20px]">reviews</span>
                                         </div>
                                     </div>
-                                    <div className="text-display text-primary">{analytics.totalLabel}</div>
+                                    <div className="text-display text-primary">{analytics.filteredLabel}</div>
                                     <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
                                         <span className="material-symbols-outlined text-[16px] mr-1">trending_up</span>
                                         +12% Monthly Growth
@@ -360,7 +444,7 @@ function buildCategoryRows(reviews) {
                                             <span className="material-symbols-outlined text-secondary text-[20px]">sentiment_satisfied</span>
                                         </div>
                                     </div>
-                                    <div className="text-display text-primary">{analytics.positivePctLabel}</div>
+                                    <div className="text-display text-primary">{analytics.scopedPositivePctLabel}</div>
                                     <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
                                         <span className="material-symbols-outlined text-[16px] mr-1">check_circle</span>
                                         Stable synthesis
@@ -373,7 +457,7 @@ function buildCategoryRows(reviews) {
                                             <span className="w-2.5 h-2.5 bg-tertiary-fixed-dim rounded-full animate-pulse shadow-[0_0_8px_rgba(79,219,200,0.8)]"></span>
                                         </div>
                                         <div className="text-headline-md font-extrabold mb-1">{analytics.statusLabel}</div>
-                                        <p className="text-secondary-fixed/80 text-label-sm font-medium">{analytics.totalLabel} Supabase records loaded</p>
+                                        <p className="text-secondary-fixed/80 text-label-sm font-medium">{analytics.filteredLabel} matching / {analytics.totalLabel} loaded</p>
                                     </div>
                                     <div className="absolute right-[-20px] bottom-[-20px] opacity-10 rotate-12">
                                         <span className="material-symbols-outlined text-[160px]">hub</span>
@@ -401,20 +485,11 @@ function buildCategoryRows(reviews) {
                                                     <stop offset="100%" stopColor="rgba(70, 72, 212, 0)"></stop>
                                                 </linearGradient>
                                             </defs>
-                                            <path d="M0,180 L100,150 L200,160 L300,100 L400,110 L500,60 L600,40" fill="none" stroke="#4648d4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4"></path>
-                                            <path d="M0,180 L100,150 L200,160 L300,100 L400,110 L500,60 L600,40 L600,200 L0,200 Z" fill="url(#chartGradient)"></path>
-                                            <circle cx="100" cy="150" fill="#4648d4" r="5"></circle>
-                                            <circle cx="300" cy="100" fill="#4648d4" r="5"></circle>
-                                            <circle cx="500" cy="60" fill="#4648d4" r="5"></circle>
-                                            <circle cx="600" cy="40" fill="#4648d4" r="8" stroke="white" strokeWidth="3"></circle>
+                                            {monthly.length > 1 && <polyline points={points} fill="none" stroke="#4648d4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4"></polyline>}
+                                            {monthly.length > 1 && <polygon points={`0,200 ${points} 600,200`} fill="url(#chartGradient)"></polygon>}
                                         </svg>
                                         <div className="absolute bottom-[-32px] left-0 w-full flex justify-between text-[11px] text-on-surface-variant uppercase font-extrabold tracking-widest">
-                                            <span>January</span>
-                                            <span>February</span>
-                                            <span>March</span>
-                                            <span>April</span>
-                                            <span>May</span>
-                                            <span>June</span>
+                                            {monthly.map((item) => <span key={item.month}>{item.month}</span>)}
                                         </div>
                                     </div>
                                 </div>
@@ -425,19 +500,19 @@ function buildCategoryRows(reviews) {
                                         <div>
                                             <div className="flex justify-between items-center mb-3">
                                                 <span className="px-4 py-1.5 rounded-full bg-on-tertiary-container/10 text-on-tertiary-container text-label-sm font-extrabold">POSITIVE</span>
-                                                <span className="text-label-md font-bold text-on-tertiary-container">{analytics.positive} Reviews</span>
+                                                <span className="text-label-md font-bold text-on-tertiary-container">{analytics.scopedPositive} Reviews</span>
                                             </div>
                                             <div className="w-full h-3 bg-surface-container-high rounded-full overflow-hidden">
-                                                <div className="h-full bg-on-tertiary-container rounded-full" style={{width: analytics.positivePctLabel}}></div>
+                                                <div className="h-full bg-on-tertiary-container rounded-full" style={{width: analytics.scopedPositivePctLabel}}></div>
                                             </div>
                                         </div>
                                         <div>
                                             <div className="flex justify-between items-center mb-3">
                                                 <span className="px-4 py-1.5 rounded-full bg-error/10 text-error text-label-sm font-extrabold">NEGATIVE</span>
-                                                <span className="text-label-md font-bold text-error">{analytics.negative} Reviews</span>
+                                                <span className="text-label-md font-bold text-error">{analytics.scopedNegative} Reviews</span>
                                             </div>
                                             <div className="w-full h-3 bg-surface-container-high rounded-full overflow-hidden">
-                                                <div className="h-full bg-error rounded-full" style={{width: analytics.negativePctLabel}}></div>
+                                                <div className="h-full bg-error rounded-full" style={{width: analytics.scopedNegativePctLabel}}></div>
                                             </div>
                                         </div>
                                     </div>
@@ -503,8 +578,23 @@ function buildCategoryRows(reviews) {
         };
 
         const ReviewsPage = () => {
-            const { reviews, analytics, loading } = useInsights();
-            const cards = reviews.slice(0, 50).map(reviewToCard);
+            const {
+                reviews,
+                filteredReviews,
+                analytics,
+                loading,
+                ratingFilter,
+                setRatingFilter,
+                sentimentFilter,
+                setSentimentFilter,
+                dateFrom,
+                setDateFrom,
+                dateTo,
+                setDateTo,
+                minDate,
+                maxDate,
+            } = useInsights();
+            const cards = filteredReviews.slice(0, 50).map(reviewToCard);
             return (
                 <div className="animate-fade-in flex flex-col h-screen">
                     <TopBar title="Search reviews..." />
@@ -572,7 +662,7 @@ function buildCategoryRows(reviews) {
                                 </div>
                                 <div className="flex justify-center py-12">
                                     <button className="px-10 py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg hover:bg-secondary hover:scale-105 active:scale-95 transition-all">
-                                        {loading ? "Loading Reviews" : `${cards.length} / ${analytics.totalLabel} Reviews`}
+                                        {loading ? "Loading Reviews" : `${cards.length} shown / ${analytics.filteredLabel} matching`}
                                     </button>
                                 </div>
                             </div>
@@ -589,30 +679,51 @@ function buildCategoryRows(reviews) {
                                     <div className="space-y-3">
                                         <div className="flex items-center justify-between group cursor-pointer hover:bg-surface-container-low p-2 rounded-lg transition-all">
                                             <div className="flex items-center gap-3">
-                                                <input checked type="checkbox" className="w-5 h-5 rounded-lg border-outline-variant text-secondary focus:ring-secondary/20"/>
+                                                <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} className="bg-surface-container-low border-none rounded-lg text-label-md px-3 py-2 focus:ring-secondary/20">
+                                                    <option value="all">All ratings</option>
+                                                    <option value="5">5 stars</option>
+                                                    <option value="4">4 stars</option>
+                                                    <option value="3">3 stars</option>
+                                                    <option value="2">2 stars</option>
+                                                    <option value="1">1 star</option>
+                                                </select>
                                                 <div className="flex items-center text-secondary text-sm">
                                                     {[1,2,3,4,5].map(s => <span key={s} className="material-symbols-outlined text-sm" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
                                                 </div>
                                             </div>
-                                            <span className="text-label-md text-on-surface-variant font-bold">{analytics.positive}</span>
+                                            <span className="text-label-md text-on-surface-variant font-bold">{analytics.filteredLabel}</span>
                                         </div>
                                     </div>
                                 </div>
                                 <div className="space-y-4">
                                     <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Sentiment Analysis</label>
                                     <div className="grid grid-cols-1 gap-2">
-                                        <button className="flex items-center justify-between px-4 py-3 bg-secondary/10 border border-secondary/30 text-secondary rounded-lg text-label-md font-bold transition-all shadow-sm">
+                                        <button onClick={() => setSentimentFilter(sentimentFilter === "Positive" ? "all" : "Positive")} className={`flex items-center justify-between px-4 py-3 ${sentimentFilter === "Positive" ? "bg-secondary/10 border-secondary/30 text-secondary" : "bg-surface-container-low border-transparent text-on-surface-variant"} border rounded-lg text-label-md font-bold transition-all shadow-sm`}>
                                             Positive
                                             <span className="material-symbols-outlined text-sm" style={{fontVariationSettings: "'FILL' 1"}}>check_circle</span>
                                         </button>
-                                        <button className="flex items-center justify-between px-4 py-3 bg-surface-container-low border border-transparent text-on-surface-variant rounded-lg text-label-md font-semibold hover:bg-surface-container-high transition-all">
+                                        <button onClick={() => setSentimentFilter(sentimentFilter === "Neutral" ? "all" : "Neutral")} className={`flex items-center justify-between px-4 py-3 ${sentimentFilter === "Neutral" ? "bg-secondary/10 border-secondary/30 text-secondary" : "bg-surface-container-low border-transparent text-on-surface-variant"} border rounded-lg text-label-md font-semibold hover:bg-surface-container-high transition-all`}>
                                             Neutral
+                                            <span className="material-symbols-outlined text-sm">radio_button_unchecked</span>
+                                        </button>
+                                        <button onClick={() => setSentimentFilter(sentimentFilter === "Negative" ? "all" : "Negative")} className={`flex items-center justify-between px-4 py-3 ${sentimentFilter === "Negative" ? "bg-secondary/10 border-secondary/30 text-secondary" : "bg-surface-container-low border-transparent text-on-surface-variant"} border rounded-lg text-label-md font-semibold hover:bg-surface-container-high transition-all`}>
+                                            Negative
                                             <span className="material-symbols-outlined text-sm">radio_button_unchecked</span>
                                         </button>
                                     </div>
                                 </div>
+                                <div className="space-y-4">
+                                    <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Review Date</label>
+                                    <div className="space-y-3">
+                                        <input className="w-full bg-surface-container-low border-none rounded-lg px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20" type="date" value={dateFrom} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateFrom(event.target.value)} />
+                                        <input className="w-full bg-surface-container-low border-none rounded-lg px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20" type="date" value={dateTo} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateTo(event.target.value)} />
+                                    </div>
+                                </div>
                                 <div className="pt-8 space-y-3">
-                                    <button className="w-full py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg active:scale-95 hover:bg-secondary transition-all">Apply Changes</button>
+                                    <button className="w-full py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg active:scale-95 hover:bg-secondary transition-all">{analytics.filteredLabel} MATCHING REVIEWS</button>
+                                    <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                                        {analytics.totalLabel} rows loaded. {analytics.filterableLabel} are fully filterable by rating/date; {analytics.unfilterable} miss a parseable rating or review date, so strict filters can exclude them.
+                                    </p>
                                 </div>
                                 <div className="p-6 bg-secondary-fixed/50 border border-secondary/10 rounded-lg space-y-3 mt-12 relative overflow-hidden">
                                     <div className="absolute -right-4 -top-4 w-16 h-16 bg-secondary/10 rounded-full blur-2xl"></div>
@@ -645,7 +756,7 @@ function buildCategoryRows(reviews) {
                 }))
                 : [
                     { t: 'Easy to use', c: 'bg-on-tertiary-container text-white', s: 'font-headline-md px-8 py-4' },
-                    { t: 'Customer Support', c: 'bg-surface-container text-on-surface-variant', s: 'font-body-md px-6 py-3' },
+                    { t: 'Virtual Cards', c: 'bg-surface-container text-on-surface-variant', s: 'font-body-md px-6 py-3' },
                     { t: 'Expense Management', c: 'bg-secondary-fixed text-on-secondary-fixed-variant', s: 'font-body-md font-bold px-6 py-3' },
                 ];
             return (
@@ -656,7 +767,7 @@ function buildCategoryRows(reviews) {
                             <div className="flex justify-between items-end">
                                 <div>
                                     <h2 className="text-display font-bold text-primary mb-2">Sentiment Analysis</h2>
-                                    <p className="text-body-md text-on-surface-variant max-w-xl">A welcoming overview of real-time user perception synthesis across {analytics.totalLabel} detailed reviews.</p>
+                                    <p className="text-body-md text-on-surface-variant max-w-xl">A welcoming overview of real-time user perception synthesis across {analytics.filteredLabel} matching reviews.</p>
                                 </div>
                                 <div className="flex gap-4">
                                     <button className="px-8 py-3 bg-white border border-outline-variant text-primary rounded-xl font-label-md hover:bg-surface-container transition-all shadow-sm">EXPORT</button>
@@ -670,7 +781,7 @@ function buildCategoryRows(reviews) {
                                         <div>
                                             <h3 className="font-label-md uppercase tracking-widest text-on-surface-variant mb-1">Overall Sentiment</h3>
                                             <div className="flex items-baseline gap-2">
-                                                <span className="font-display text-headline-lg text-primary">{analytics.average}</span>
+                                                <span className="font-display text-headline-lg text-primary">{analytics.scopedAverage}</span>
                                                 <span className="text-on-tertiary-container bg-tertiary-fixed px-3 py-0.5 rounded-full font-label-md">+8.4% vs LY</span>
                                             </div>
                                         </div>
@@ -683,21 +794,21 @@ function buildCategoryRows(reviews) {
                                             <circle cx="18" cy="18" fill="transparent" r="15.915" stroke="#ba1a1a" strokeDasharray="10 90" strokeDashoffset="-90" strokeLinecap="round" strokeWidth="4"></circle>
                                         </svg>
                                         <div className="absolute flex flex-col items-center">
-                                            <span className="font-display text-display text-primary leading-none">{analytics.positivePctLabel}</span>
+                                            <span className="font-display text-display text-primary leading-none">{analytics.scopedPositivePctLabel}</span>
                                             <span className="font-label-md text-on-surface-variant mt-1">POSITIVE</span>
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-3 gap-4 mt-10">
                                         <div className="text-center p-3 rounded-2xl bg-on-tertiary-container/5">
-                                            <p className="text-on-tertiary-container font-bold text-lg">{analytics.positivePctLabel}</p>
+                                            <p className="text-on-tertiary-container font-bold text-lg">{analytics.scopedPositivePctLabel}</p>
                                             <p className="font-label-md text-on-surface-variant">Positive</p>
                                         </div>
                                         <div className="text-center p-3 rounded-2xl bg-secondary/5">
-                                            <p className="text-secondary font-bold text-lg">{analytics.neutralPct}%</p>
+                                            <p className="text-secondary font-bold text-lg">{analytics.scopedNeutralPct}%</p>
                                             <p className="font-label-md text-on-surface-variant">Neutral</p>
                                         </div>
                                         <div className="text-center p-3 rounded-2xl bg-error/5">
-                                            <p className="text-error font-bold text-lg">{analytics.negativePctLabel}</p>
+                                            <p className="text-error font-bold text-lg">{analytics.scopedNegativePctLabel}</p>
                                             <p className="font-label-md text-on-surface-variant">Negative</p>
                                         </div>
                                     </div>

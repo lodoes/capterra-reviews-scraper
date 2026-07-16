@@ -3,6 +3,7 @@ create table if not exists public.capterra_reviews (
   product_slug text not null,
   source_url text not null,
   review_date text,
+  review_date_iso date,
   reviewer text,
   title text,
   rating text,
@@ -18,6 +19,12 @@ create index if not exists capterra_reviews_product_slug_idx
 
 create index if not exists capterra_reviews_review_date_idx
   on public.capterra_reviews (review_date);
+
+alter table public.capterra_reviews
+  add column if not exists review_date_iso date;
+
+create index if not exists capterra_reviews_review_date_iso_idx
+  on public.capterra_reviews (review_date_iso);
 
 create index if not exists capterra_reviews_data_gin_idx
   on public.capterra_reviews using gin (data);

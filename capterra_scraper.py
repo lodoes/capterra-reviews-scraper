@@ -46,6 +46,7 @@ DEFAULT_URL = "https://www.capterra.com/p/157515/Spendesk/reviews/"
 
 DATE_RE = re.compile(r"\b([A-Z][a-z]+ \d{1,2}, \d{4})\b")
 RATING_RE = re.compile(r"\b([1-5]\.\d)\b")
+DATE_FORMATS = ("%B %d, %Y", "%Y-%m-%d")
 
 
 # --------------------------------------------------------------------------
@@ -229,6 +230,18 @@ def _section_text(card, label):
 
 def _clean_text(text):
     return re.sub(r"[ \t\r\f\v]+", " ", text or "").strip()
+
+
+def _review_date_iso(value):
+    raw = _clean_text(str(value or ""))
+    if not raw:
+        return None
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            pass
+    return None
 
 
 def _lines(el):
@@ -716,6 +729,7 @@ def upload_to_supabase(reviews, table, supabase_url, supabase_key):
             "product_slug": review.get("_product_slug", ""),
             "source_url": review.get("_source_url", ""),
             "review_date": review.get("date", ""),
+            "review_date_iso": _review_date_iso(review.get("date", "")),
             "reviewer": review.get("reviewer", ""),
             "title": review.get("title", ""),
             "rating": review.get("rating", ""),
@@ -728,6 +742,14 @@ def upload_to_supabase(reviews, table, supabase_url, supabase_key):
     for batch in _chunked(rows, 500):
         response = requests.post(endpoint, headers=headers, json=batch, timeout=60)
         if response.status_code >= 400:
+            if "review_date_iso" in response.text and "column" in response.text.lower():
+                fallback_batch = [{k: v for k, v in row.items() if k != "review_date_iso"} for row in batch]
+                response = requests.post(endpoint, headers=headers, json=fallback_batch, timeout=60)
+                if response.status_code < 400:
+                    print("  !! Colonne review_date_iso absente dans Supabase : upload fait sans date ISO. "
+                          "Execute supabase_schema.sql pour activer les filtres date cote DB.")
+                    total += len(batch)
+                    continue
             if response.status_code in (401, 403) and "row-level security" in response.text.lower():
                 raise RuntimeError(
                     "Supabase bloque l'upsert a cause de la RLS. "
