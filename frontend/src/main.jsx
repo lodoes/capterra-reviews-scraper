@@ -6,7 +6,6 @@ import {
   Bell,
   CalendarDays,
   CheckCircle2,
-  Database,
   Download,
   LayoutDashboard,
   MessageSquareText,
@@ -253,38 +252,6 @@ function SentimentDonut({ stats }) {
   );
 }
 
-function RatingBars({ distribution }) {
-  const max = Math.max(1, ...distribution.map((item) => item.count));
-  return (
-    <div className="bars" aria-label="Rating distribution">
-      {distribution.map((item) => (
-        <div className="bar-row" key={item.rating}>
-          <span>{item.rating}</span>
-          <div className="bar-track">
-            <div className="bar-fill" style={{ width: `${(item.count / max) * 100}%` }} />
-          </div>
-          <strong>{item.count}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Trend({ series }) {
-  const max = Math.max(1, ...series.map((item) => item.count));
-  const visible = series.slice(-14);
-  return (
-    <div className="trend" aria-label="Monthly review volume">
-      {visible.map((item) => (
-        <div className="trend-item" key={item.month}>
-          <div className="trend-column" style={{ height: `${Math.max(8, (item.count / max) * 132)}px` }} />
-          <span>{item.month.slice(5)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function KeywordCloud({ words }) {
   return (
     <div className="keyword-cloud">
@@ -508,37 +475,82 @@ function OverviewPage({ reviews, filtered, stats, monthly, keywords, loading, on
 }
 
 function SentimentPage({
-  filtered,
   reviews,
   stats,
-  distribution,
-  monthly,
   keywords,
   loading,
   error,
   onExport,
-  ratingFilter,
-  setRatingFilter,
-  sentimentFilter,
-  setSentimentFilter,
-  sortMode,
-  setSortMode,
 }) {
+  const positivePct = stats.total ? Math.round((stats.positive / stats.total) * 100) : 0;
+  const neutralPct = stats.total ? Math.round((stats.neutral / stats.total) * 100) : 0;
+  const negativePct = Math.max(0, 100 - positivePct - neutralPct);
+  const avgWords = reviews.length
+    ? Math.round(reviews.reduce((sum, review) => sum + reviewText(review).split(/\s+/).filter(Boolean).length, 0) / reviews.length)
+    : 0;
+  const nps = stats.total ? Math.round(((stats.positive - stats.negative) / stats.total) * 100) : 0;
+  const categorySpecs = [
+    {
+      name: "Features",
+      words: ["feature", "fonction", "card", "carte", "approval", "workflow", "automated", "virtual"],
+      fallback: "Virtual cards and automated approvals are top tier.",
+    },
+    {
+      name: "Pricing",
+      words: ["price", "pricing", "cost", "expensive", "plan", "prix", "tarif", "cher"],
+      fallback: "Value is high, but pricing needs monitoring for SMBs.",
+    },
+    {
+      name: "Ease of Use",
+      words: ["easy", "simple", "intuitive", "facile", "rapide", "use", "ux"],
+      fallback: "Users repeatedly mention speed, clarity, and low friction.",
+    },
+    {
+      name: "Support",
+      words: ["support", "customer", "service", "help", "assistance", "response", "réponse"],
+      fallback: "Support quality remains a category to track closely.",
+    },
+  ];
+  const categoryRows = categorySpecs.map((category) => {
+    const matches = reviews.filter((review) => {
+      const text = reviewText(review);
+      return category.words.some((word) => text.includes(word));
+    });
+    const source = matches.length ? matches : reviews;
+    const ratings = source.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
+    const average = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
+    const score = Number(average.toFixed(1));
+    const sentiment = score >= 4.6 ? "Peak" : score >= 4 ? "High" : score >= 3 ? "Mixed" : "Declining";
+    const tone = score >= 4 ? "positive" : score >= 3 ? "neutral" : "negative";
+    const volume = matches.length || 0;
+    const sample = matches.find((review) => review.data?.summary || review.title);
+    return {
+      ...category,
+      score,
+      sentiment,
+      tone,
+      volume,
+      takeaway: sample?.data?.summary || sample?.title || category.fallback,
+    };
+  });
+
   return (
     <>
-      <section className="hero">
+      <section className="sentiment-header">
         <div>
-          <span className="status-pill">
-            <Sparkles size={14} />
-            Extracting: Spendesk
-          </span>
-          <h1>Review Intelligence</h1>
-          <p>Analyse publique des retours Capterra, synchronisee depuis Supabase et chargee en integralite.</p>
+          <h1>Sentiment Analysis</h1>
+          <p>A welcoming overview of real-time user perception synthesis across {reviews.length} detailed reviews.</p>
         </div>
-        <button className="secondary-button" onClick={onExport}>
-          <Download size={17} />
-          Export CSV
-        </button>
+        <div className="overview-actions">
+          <button className="secondary-button" onClick={onExport} type="button">
+            <Download size={17} />
+            Export
+          </button>
+          <button className="primary-button" type="button">
+            <RefreshCw size={17} />
+            Update Scan
+          </button>
+        </div>
       </section>
 
       {error && (
@@ -548,14 +560,7 @@ function SentimentPage({
         </div>
       )}
 
-      <section className="metrics-grid">
-        <Metric label="Reviews loaded" value={loading ? "..." : stats.total} detail="all rows fetched" accent="dark" />
-        <Metric label="Average rating" value={loading ? "..." : stats.average} detail="Capterra score" />
-        <Metric label="Products" value={loading ? "..." : stats.products} detail="unique slugs" />
-        <Metric label="Vendor replies" value={loading ? "..." : stats.withResponse} detail="answered reviews" />
-      </section>
-
-      <section className="insight-grid">
+      <section className="sentiment-grid">
         <SentimentDonut stats={stats} />
         <div className="panel keyword-panel">
           <div className="panel-heading spread">
@@ -567,123 +572,65 @@ function SentimentPage({
           </div>
           <KeywordCloud words={keywords} />
         </div>
-        <div className="panel">
-          <div className="panel-heading">
-            <Star size={18} />
-            <h2>Rating Distribution</h2>
-          </div>
-          <RatingBars distribution={distribution} />
+      </section>
+
+      <section className="category-performance">
+        <div className="category-heading">
+          <h2>Categorized Performance</h2>
+          <button className="secondary-button" type="button">Last 30 Days</button>
         </div>
-        <div className="panel">
-          <div className="panel-heading">
-            <Database size={18} />
-            <h2>Monthly Volume</h2>
-          </div>
-          <Trend series={monthly} />
+        <div className="category-table-wrap">
+          <table className="category-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Score</th>
+                <th>Sentiment Trend</th>
+                <th>Key Takeaway</th>
+                <th>Volume</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categoryRows.map((row) => (
+                <tr key={row.name}>
+                  <td>{row.name}</td>
+                  <td><span className={`score-pill ${row.tone}`}>{row.score || "..."}</span></td>
+                  <td>
+                    <div className="trend-inline">
+                      <div className="trend-track">
+                        <div className={`trend-fill ${row.tone}`} style={{ width: `${Math.max(8, (row.score / 5) * 100)}%` }} />
+                      </div>
+                      <span className={row.tone}>{row.sentiment}</span>
+                    </div>
+                  </td>
+                  <td><em>"{row.takeaway}"</em></td>
+                  <td>{row.volume} reviews</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 
-      <section className="workspace">
-        <section className="feed">
-          <div className="section-heading">
-            <div>
-              <p className="overline">Review feed</p>
-              <h2>All Reviews</h2>
-            </div>
-            <span>{loading ? "Loading..." : `${filtered.length} shown / ${reviews.length} total`}</span>
+      <section className="sentiment-bento">
+        <article className="sentiment-metric-card">
+          <h2>Net Promoter Score</h2>
+          <div className="big-number">{nps}</div>
+          <div className="mini-track-label">
+            <span>Promoters ({positivePct}%)</span>
+            <strong>{stats.positive}</strong>
           </div>
-
-          <div className="review-list">
-            {filtered.map((review) => {
-              const data = review.data || {};
-              const sentiment = sentimentForRating(review.rating);
-              return (
-                <article className="review-card" key={review.fingerprint}>
-                  <div className="review-head">
-                    <div className="avatar" aria-hidden="true">
-                      {(review.reviewer || "U").slice(0, 1).toUpperCase()}
-                    </div>
-                    <div>
-                      <h3>{review.reviewer || "Verified Reviewer"}</h3>
-                      <div className="review-meta">
-                        <span>{data.reviewer_role || "Reviewer"}</span>
-                        <span>{formatDate(review.review_date)}</span>
-                      </div>
-                    </div>
-                    <div className="review-rating">
-                      <Stars rating={review.rating} />
-                      <span className={`sentiment-badge ${sentiment.toLowerCase()}`}>{sentiment}</span>
-                    </div>
-                  </div>
-                  <div className="verdict">
-                    <span>Overall verdict</span>
-                    <strong>{review.title || "Untitled review"}</strong>
-                    {data.summary && <p>{data.summary}</p>}
-                  </div>
-                  <div className="pros-cons">
-                    {data.pros && (
-                      <div className="pros">
-                        <span><CheckCircle2 size={15} /> Pros</span>
-                        <p>{data.pros}</p>
-                      </div>
-                    )}
-                    {data.cons && (
-                      <div className="cons">
-                        <span><AlertCircle size={15} /> Cons</span>
-                        <p>{data.cons}</p>
-                      </div>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-            {!loading && filtered.length === 0 && <div className="empty">No reviews match these filters.</div>}
-          </div>
-        </section>
-
-        <aside className="filters">
-          <div className="filter-title">
-            <SlidersHorizontal size={18} />
-            <h2>Filters</h2>
-          </div>
-
-          <label>
-            Rating
-            <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} aria-label="Filter by rating">
-              <option value="all">All ratings</option>
-              <option value="5">5 stars</option>
-              <option value="4">4 stars</option>
-              <option value="3">3 stars</option>
-              <option value="2">2 stars</option>
-              <option value="1">1 star</option>
-            </select>
-          </label>
-
-          <label>
-            Sentiment
-            <select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value)} aria-label="Filter by sentiment">
-              <option value="all">All sentiments</option>
-              <option value="Positive">Positive</option>
-              <option value="Neutral">Neutral</option>
-              <option value="Negative">Negative</option>
-            </select>
-          </label>
-
-          <label>
-            Sort
-            <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort reviews">
-              <option value="date-desc">Newest first</option>
-              <option value="rating-desc">Best rating</option>
-              <option value="rating-asc">Lowest rating</option>
-            </select>
-          </label>
-
-          <div className="scrape-status">
-            <span>Scrape Status</span>
-            <strong>{stats.total}</strong>
-            <small>Total reviews synced</small>
-          </div>
-        </aside>
+          <div className="soft-track"><div className="positive-fill" style={{ width: `${positivePct}%` }} /></div>
+        </article>
+        <article className="sentiment-metric-card">
+          <h2>Avg. Review Length</h2>
+          <div className="big-number">{avgWords} <span>words</span></div>
+          <p>Users are providing detailed feedback, indicating trust and engagement with the platform's core workflows.</p>
+        </article>
+        <article className="sentiment-synthesis">
+          <h2>Strategic Synthesis</h2>
+          <p>Overall sentiment is {positivePct >= 70 ? "strongly positive" : "balanced"}, with {positivePct}% positive reviews, {neutralPct}% neutral reviews, and {negativePct}% negative reviews. Pricing and support remain the categories to monitor.</p>
+        </article>
       </section>
     </>
   );
