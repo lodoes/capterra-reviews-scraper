@@ -29,6 +29,7 @@ Parsing : 3 strategies essayees dans l'ordre :
 """
 
 import argparse
+import base64
 import csv
 import hashlib
 import json
@@ -640,8 +641,28 @@ def _chunked(items, size):
         yield items[i:i + size]
 
 
+def _supabase_jwt_role(key):
+    parts = (key or "").split(".")
+    if len(parts) != 3:
+        return ""
+    try:
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload.encode("utf-8")))
+    except Exception:
+        return ""
+    return str(data.get("role") or "")
+
+
 def upload_to_supabase(reviews, table, supabase_url, supabase_key):
     import requests
+
+    role = _supabase_jwt_role(supabase_key)
+    if role == "anon":
+        raise RuntimeError(
+            "La cle Supabase fournie est une cle anon. "
+            "L'upload serveur doit utiliser SUPABASE_SERVICE_ROLE_KEY, "
+            "sinon la RLS bloque les inserts/upserts."
+        )
 
     endpoint = f"{supabase_url}/rest/v1/{table}?on_conflict=fingerprint"
     headers = {
@@ -669,6 +690,12 @@ def upload_to_supabase(reviews, table, supabase_url, supabase_key):
     for batch in _chunked(rows, 500):
         response = requests.post(endpoint, headers=headers, json=batch, timeout=60)
         if response.status_code >= 400:
+            if response.status_code in (401, 403) and "row-level security" in response.text.lower():
+                raise RuntimeError(
+                    "Supabase bloque l'upsert a cause de la RLS. "
+                    "Verifie que SUPABASE_SERVICE_ROLE_KEY contient bien la service role key "
+                    "du projet Supabase, pas la cle anon/public."
+                )
             raise RuntimeError(
                 f"Erreur Supabase {response.status_code}: {response.text[:1000]}"
             )
