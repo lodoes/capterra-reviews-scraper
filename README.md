@@ -44,3 +44,29 @@ python capterra_scraper.py --url "https://www.capterra.com/p/157515/Spendesk/rev
 ```
 
 Les exports sont generes dans `resultats/`, qui est ignore par Git.
+
+## Supabase
+
+Le script peut envoyer automatiquement tous les avis dans Supabase apres le scrape.
+
+1. Dans Supabase, ouvre le SQL Editor et execute `supabase_schema.sql`.
+2. Dans GitHub, ajoute ces secrets au repo :
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+3. Lance le workflow GitHub Actions `Scrape Capterra Reviews`.
+
+En local, l'upload Supabase se declenche automatiquement si les variables sont presentes :
+
+```powershell
+$env:SUPABASE_URL="https://xxxx.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="..."
+python capterra_scraper.py --headless
+```
+
+Pour forcer une erreur si Supabase n'est pas configure :
+
+```powershell
+python capterra_scraper.py --headless --supabase
+```
+
+La table par defaut est `capterra_reviews`. Chaque avis est upsert via un `fingerprint` unique, avec l'avis complet stocke dans la colonne JSONB `data`.

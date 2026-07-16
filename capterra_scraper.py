@@ -19,7 +19,7 @@ Usage :
     python capterra_scraper.py --cdp-mode         # CDP Mode meme avec fenetre visible
 
 Dependances :
-    pip install seleniumbase beautifulsoup4
+    pip install seleniumbase beautifulsoup4 requests
     (SeleniumBase telecharge son propre chromedriver au premier lancement)
 
 Parsing : 3 strategies essayees dans l'ordre :
@@ -32,10 +32,11 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -418,6 +419,16 @@ def review_fingerprint(r):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def add_review_metadata(reviews, slug, source_url):
+    scraped_at = datetime.now(timezone.utc).isoformat()
+    for review in reviews:
+        review["_fingerprint"] = review_fingerprint(review)
+        review["_product_slug"] = slug
+        review["_source_url"] = source_url
+        review["_scraped_at"] = scraped_at
+    return reviews
+
+
 def scrape(url, delay, max_pages, out_dir, headless=False, cdp_mode=False):
     from seleniumbase import SB
 
@@ -496,6 +507,54 @@ def export(reviews, out_dir, slug):
     return csv_path, json_path
 
 
+def _supabase_config(args):
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
+    table = args.supabase_table or os.getenv("SUPABASE_TABLE") or "capterra_reviews"
+    return url, key, table
+
+
+def _chunked(items, size):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def upload_to_supabase(reviews, table, supabase_url, supabase_key):
+    import requests
+
+    endpoint = f"{supabase_url}/rest/v1/{table}?on_conflict=fingerprint"
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+    }
+    rows = []
+    for review in reviews:
+        rows.append({
+            "fingerprint": review.get("_fingerprint") or review_fingerprint(review),
+            "product_slug": review.get("_product_slug", ""),
+            "source_url": review.get("_source_url", ""),
+            "review_date": review.get("date", ""),
+            "reviewer": review.get("reviewer", ""),
+            "title": review.get("title", ""),
+            "rating": review.get("rating", ""),
+            "page": review.get("_page"),
+            "scraped_at": review.get("_scraped_at"),
+            "data": review,
+        })
+
+    total = 0
+    for batch in _chunked(rows, 500):
+        response = requests.post(endpoint, headers=headers, json=batch, timeout=60)
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Erreur Supabase {response.status_code}: {response.text[:1000]}"
+            )
+        total += len(batch)
+    return total
+
+
 def main():
     ap = argparse.ArgumentParser(description="Scraper d'avis Capterra (SeleniumBase UC)")
     ap.add_argument("--url", default=DEFAULT_URL, help="URL de la page d'avis Capterra")
@@ -506,6 +565,12 @@ def main():
                     help="Navigateur invisible (peut etre davantage bloque par Cloudflare)")
     ap.add_argument("--cdp-mode", action="store_true",
                     help="Active le CDP Mode SeleniumBase (automatique avec --headless)")
+    ap.add_argument("--supabase", action="store_true",
+                    help="Force l'upload Supabase et echoue si les variables manquent")
+    ap.add_argument("--no-supabase", action="store_true",
+                    help="Desactive l'upload Supabase meme si les variables sont presentes")
+    ap.add_argument("--supabase-table", default="",
+                    help="Table Supabase cible (defaut: capterra_reviews)")
     args = ap.parse_args()
 
     m = re.search(r"/p/\d+/([^/]+)/", args.url)
@@ -523,8 +588,17 @@ def main():
     if not reviews:
         sys.exit("Aucun avis recupere. Voir le dossier debug/ pour le HTML brut.")
 
+    add_review_metadata(reviews, slug, args.url)
     csv_path, json_path = export(reviews, out_dir, slug)
     print(f"\n{len(reviews)} avis exportes :\n  {csv_path}\n  {json_path}")
+
+    supabase_url, supabase_key, supabase_table = _supabase_config(args)
+    should_upload = not args.no_supabase and bool(supabase_url and supabase_key)
+    if args.supabase and not should_upload:
+        sys.exit("Supabase active, mais SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY manquent.")
+    if should_upload:
+        uploaded = upload_to_supabase(reviews, supabase_table, supabase_url, supabase_key)
+        print(f"{uploaded} avis upsertes dans Supabase ({supabase_table}).")
 
 
 if __name__ == "__main__":

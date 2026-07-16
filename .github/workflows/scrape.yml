@@ -39,6 +39,10 @@ jobs:
 
       - name: Run scraper
         shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_TABLE: capterra_reviews
         run: |
           URL="${{ github.event.inputs.url || 'https://www.capterra.com/p/157515/Spendesk/reviews/' }}"
           MAX_PAGES="${{ github.event.inputs.max_pages || '0' }}"
@@ -46,6 +50,7 @@ jobs:
             --url "$URL" \
             --max-pages "$MAX_PAGES" \
             --headless \
+            --supabase \
             --out resultats
 
       - name: Upload results
