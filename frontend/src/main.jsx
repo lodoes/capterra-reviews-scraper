@@ -1,913 +1,773 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  AlertCircle,
-  BarChart3,
-  Bell,
-  CalendarDays,
-  CheckCircle2,
-  Download,
-  LayoutDashboard,
-  MessageSquareText,
-  RefreshCw,
-  Search,
-  Settings,
-  SlidersHorizontal,
-  Sparkles,
-  Star,
-  ThumbsDown,
-  ThumbsUp,
-} from "lucide-react";
 import "./styles.css";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const TABLE = import.meta.env.VITE_SUPABASE_TABLE || "capterra_reviews";
 const PAGE_SIZE = 1000;
+const InsightsContext = createContext(null);
 
 function asNumber(value) {
-  const n = Number.parseFloat(value);
-  return Number.isFinite(n) ? n : null;
+    const n = Number.parseFloat(value);
+    return Number.isFinite(n) ? n : null;
 }
 
 function formatDate(value) {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" });
+    if (!value) return "";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" });
 }
 
-function sentimentForRating(ratingValue) {
-  const rating = asNumber(ratingValue);
-  if (rating === null) return "Neutral";
-  if (rating >= 4) return "Positive";
-  if (rating <= 2) return "Negative";
-  return "Neutral";
+function sentimentForRating(value) {
+    const rating = asNumber(value);
+    if (rating === null) return "Neutral";
+    if (rating >= 4) return "Positive";
+    if (rating <= 2) return "Negative";
+    return "Neutral";
 }
 
 function reviewText(review) {
-  const data = review.data || {};
-  return [
-    review.title,
-    review.reviewer,
-    data.summary,
-    data.pros,
-    data.cons,
-    data.reviewer_role,
-    data.reviewer_industry,
-    data.vendor_response,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+    const data = review.data || {};
+    return [review.title, review.reviewer, data.summary, data.pros, data.cons, data.reviewer_role, data.reviewer_industry]
+        .filter(Boolean).join(" ").toLowerCase();
 }
 
 async function fetchAllReviews() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY.");
-  }
-
-  const rows = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const to = from + PAGE_SIZE - 1;
-    const url = new URL(`${SUPABASE_URL}/rest/v1/${TABLE}`);
-    url.searchParams.set("select", "*");
-    url.searchParams.set("order", "review_date.desc.nullslast,created_at.desc");
-
-    const response = await fetch(url, {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        Range: `${from}-${to}`,
-      },
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Supabase ${response.status}: ${body}`);
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return [];
+    const rows = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+        const to = from + PAGE_SIZE - 1;
+        const url = new URL(`${SUPABASE_URL}/rest/v1/${TABLE}`);
+        url.searchParams.set("select", "*");
+        url.searchParams.set("order", "review_date.desc.nullslast,created_at.desc");
+        const response = await fetch(url, {
+            headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Range: `${from}-${to}` },
+        });
+        if (!response.ok) throw new Error(`Supabase ${response.status}: ${await response.text()}`);
+        const batch = await response.json();
+        rows.push(...batch);
+        if (batch.length < PAGE_SIZE) break;
     }
-
-    const batch = await response.json();
-    rows.push(...batch);
-    if (batch.length < PAGE_SIZE) break;
-  }
-  return rows;
+    return rows;
 }
 
-function buildMonthlySeries(reviews) {
-  const buckets = new Map();
-  for (const review of reviews) {
-    const raw = review.review_date || review.created_at;
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) continue;
-    const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
-    const item = buckets.get(key) || { month: key, count: 0 };
-    item.count += 1;
-    buckets.set(key, item);
-  }
-  return [...buckets.values()].sort((a, b) => a.month.localeCompare(b.month));
-}
-
-function getDistribution(reviews) {
-  const buckets = new Map([[1, 0], [2, 0], [3, 0], [4, 0], [5, 0]]);
-  for (const review of reviews) {
-    const rating = asNumber(review.rating);
-    if (rating === null) continue;
-    const rounded = Math.max(1, Math.min(5, Math.round(rating)));
-    buckets.set(rounded, (buckets.get(rounded) || 0) + 1);
-  }
-  return [...buckets.entries()].map(([rating, count]) => ({ rating, count }));
-}
-
-function getKeywordCloud(reviews) {
-  const stopWords = new Set([
-    "the", "and", "for", "with", "that", "this", "from", "are", "you", "your", "our", "can", "was",
-    "very", "have", "has", "but", "not", "all", "more", "use", "using", "easy", "great", "good",
-    "les", "des", "une", "pour", "dans", "avec", "est", "pas", "sur", "nous", "vous", "très",
-  ]);
-  const counts = new Map();
-  for (const review of reviews) {
-    const data = review.data || {};
-    const text = `${data.summary || ""} ${data.pros || ""} ${data.cons || ""}`.toLowerCase();
-    const words = text.match(/[a-zÀ-ÿ][a-zÀ-ÿ'-]{3,}/g) || [];
-    for (const word of words) {
-      const clean = word.replace(/^['-]+|['-]+$/g, "");
-      if (stopWords.has(clean)) continue;
-      counts.set(clean, (counts.get(clean) || 0) + 1);
+function getKeywords(reviews) {
+    const stop = new Set("the and for with that this from are you your our can was very have has but not all more use using easy great good spendesk les des une pour dans avec est pas sur nous vous tres très outil avis simple utilisation".split(" "));
+    const counts = new Map();
+    for (const review of reviews) {
+        const data = review.data || {};
+        const text = `${data.summary || ""} ${data.pros || ""} ${data.cons || ""}`.toLowerCase();
+        for (const raw of text.match(/[a-zÀ-ÿ][a-zÀ-ÿ'-]{3,}/g) || []) {
+            const word = raw.replace(/^['-]+|['-]+$/g, "");
+            if (stop.has(word)) continue;
+            counts.set(word, (counts.get(word) || 0) + 1);
+        }
     }
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 18)
-    .map(([word, count], index) => ({ word, count, tone: index % 4 }));
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([word, count]) => ({ word, count }));
+}
+
+function getMonthly(reviews) {
+    const buckets = new Map();
+    for (const review of reviews) {
+        const parsed = new Date(review.review_date || review.created_at);
+        if (Number.isNaN(parsed.getTime())) continue;
+        const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
+        buckets.set(key, (buckets.get(key) || 0) + 1);
+    }
+    return [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-6).map(([month, count]) => ({ month, count }));
 }
 
 function exportCsv(reviews) {
-  const columns = ["review_date", "reviewer", "title", "rating", "product_slug", "summary", "pros", "cons"];
-  const lines = [
-    columns.join(","),
-    ...reviews.map((review) => {
-      const data = review.data || {};
-      const row = {
-        ...review,
-        summary: data.summary || "",
-        pros: data.pros || "",
-        cons: data.cons || "",
-      };
-      return columns
-        .map((column) => `"${String(row[column] || "").replaceAll('"', '""')}"`)
-        .join(",");
-    }),
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "capterra_reviews.csv";
-  link.click();
-  URL.revokeObjectURL(url);
+    const cols = ["review_date", "reviewer", "title", "rating", "summary", "pros", "cons"];
+    const lines = [cols.join(","), ...reviews.map((review) => {
+        const data = review.data || {};
+        const row = { ...review, summary: data.summary || "", pros: data.pros || "", cons: data.cons || "" };
+        return cols.map((col) => `"${String(row[col] || "").replaceAll('"', '""')}"`).join(",");
+    })];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "capterra_reviews.csv";
+    link.click();
+    URL.revokeObjectURL(url);
 }
 
-function NavItem({ icon: Icon, label, active, onClick }) {
-  return (
-    <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick} type="button">
-      <Icon size={20} />
-      <span>{label}</span>
-    </button>
-  );
+function InsightsProvider({ children }) {
+    const [reviews, setReviews] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+    useEffect(() => {
+        fetchAllReviews().then(setReviews).catch((err) => setError(err.message || String(err))).finally(() => setLoading(false));
+    }, []);
+    const value = useMemo(() => {
+        const ratings = reviews.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
+        const avg = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
+        const positive = reviews.filter((review) => sentimentForRating(review.rating) === "Positive").length;
+        const neutral = reviews.filter((review) => sentimentForRating(review.rating) === "Neutral").length;
+        const negative = reviews.filter((review) => sentimentForRating(review.rating) === "Negative").length;
+        const positivePct = reviews.length ? Math.round((positive / reviews.length) * 100) : 0;
+        const negativePct = reviews.length ? Math.round((negative / reviews.length) * 100) : 0;
+        const keywords = getKeywords(reviews);
+        const fallbackPros = [
+            { icon: "speed", title: "User Interface Speed", desc: "Users consistently praise the responsiveness and fast loading times of the dashboards." },
+            { icon: "account_balance_wallet", title: "Card Management", desc: "The ease of creating and disabling virtual cards is a major high point for finance teams." },
+            { icon: "integration_instructions", title: "ERP Integrations", desc: "Seamless syncing with Xero and NetSuite reduces manual bookkeeping errors by 60%." },
+        ];
+        const fallbackCons = [
+            { icon: "euro", title: "FX Fees Transparency", desc: "Some users find the foreign exchange fees slightly high compared to traditional bank rates." },
+            { icon: "receipt_long", title: "Mobile OCR Accuracy", desc: "Minor feedback regarding occasional failures to read blurry paper receipts in low light." },
+            { icon: "notifications_active", title: "Notification Density", desc: "Approvers note that they receive too many notification emails during peak spending cycles." },
+        ];
+        return {
+            reviews,
+            loading,
+            error,
+            keywords,
+            monthly: getMonthly(reviews),
+            topPros: buildHighlights(reviews, "pros", fallbackPros),
+            topCons: buildHighlights(reviews, "cons", fallbackCons),
+            categoryRows: buildCategoryRows(reviews),
+            analytics: {
+                total: reviews.length,
+                totalLabel: reviews.length.toLocaleString("en-US"),
+                average: avg ? avg.toFixed(1) : "0.0",
+                positive,
+                neutral,
+                negative,
+                positivePct,
+                neutralPct: reviews.length ? Math.round((neutral / reviews.length) * 100) : 0,
+                negativePct,
+                positivePctLabel: `${positivePct}%`,
+                negativePctLabel: `${negativePct}%`,
+                statusLabel: loading ? "Loading" : "Live Sync",
+            },
+        };
+    }, [reviews, loading, error]);
+    return <InsightsContext.Provider value={value}>{children}</InsightsContext.Provider>;
 }
 
-function Metric({ label, value, detail, accent }) {
-  return (
-    <section className={`metric ${accent || ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </section>
-  );
+function useInsights() {
+    return useContext(InsightsContext);
 }
 
-function SentimentDonut({ stats }) {
-  const total = Math.max(1, stats.positive + stats.neutral + stats.negative);
-  const positive = Math.round((stats.positive / total) * 100);
-  const neutral = Math.round((stats.neutral / total) * 100);
-  const negative = Math.max(0, 100 - positive - neutral);
-  return (
-    <div className="sentiment-card panel">
-      <div className="panel-heading spread">
-        <div>
-          <p className="overline">Overall sentiment</p>
-          <h2>{stats.average}</h2>
-        </div>
-        <span className="chip success">Live</span>
-      </div>
-      <div className="donut-wrap">
-        <svg className="donut" viewBox="0 0 36 36" aria-label="Sentiment chart">
-          <circle cx="18" cy="18" r="15.915" fill="transparent" stroke="#edf1f4" strokeWidth="4" />
-          <circle
-            cx="18"
-            cy="18"
-            r="15.915"
-            fill="transparent"
-            stroke="#009485"
-            strokeDasharray={`${positive} ${100 - positive}`}
-            strokeDashoffset="0"
-            strokeLinecap="round"
-            strokeWidth="4"
-          />
-          <circle
-            cx="18"
-            cy="18"
-            r="15.915"
-            fill="transparent"
-            stroke="#6063ee"
-            strokeDasharray={`${neutral} ${100 - neutral}`}
-            strokeDashoffset={`-${positive}`}
-            strokeLinecap="round"
-            strokeWidth="4"
-          />
-          <circle
-            cx="18"
-            cy="18"
-            r="15.915"
-            fill="transparent"
-            stroke="#ba1a1a"
-            strokeDasharray={`${negative} ${100 - negative}`}
-            strokeDashoffset={`-${positive + neutral}`}
-            strokeLinecap="round"
-            strokeWidth="4"
-          />
-        </svg>
-        <div className="donut-center">
-          <strong>{positive}%</strong>
-          <span>Positive</span>
-        </div>
-      </div>
-      <div className="sentiment-split">
-        <span><strong>{positive}%</strong> Positive</span>
-        <span><strong>{neutral}%</strong> Neutral</span>
-        <span><strong>{negative}%</strong> Negative</span>
-      </div>
-    </div>
-  );
-}
-
-function KeywordCloud({ words }) {
-  return (
-    <div className="keyword-cloud">
-      {words.map((item) => (
-        <span className={`keyword tone-${item.tone}`} key={item.word}>
-          {item.word}
-          <small>{item.count}</small>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function Stars({ rating }) {
-  const rounded = Math.round(asNumber(rating) || 0);
-  return (
-    <div className="stars" aria-label={`${rating || 0} stars`}>
-      {[1, 2, 3, 4, 5].map((star) => (
-        <Star key={star} size={15} fill={star <= rounded ? "currentColor" : "none"} />
-      ))}
-    </div>
-  );
-}
-
-function TopicList({ title, tone, icon: Icon, items }) {
-  return (
-    <section className={`topic-card ${tone}`}>
-      <div className="topic-title">
-        <div className="topic-icon">
-          <Icon size={20} />
-        </div>
-        <h2>{title}</h2>
-      </div>
-      <div className="topic-list">
-        {items.length ? items.map((item) => (
-          <article className="topic-item" key={item.word}>
-            <div className="topic-bullet">{item.count}</div>
-            <div>
-              <strong>{item.word}</strong>
-              <p>{item.detail}</p>
-            </div>
-          </article>
-        )) : (
-          <article className="topic-item">
-            <div className="topic-bullet">0</div>
-            <div>
-              <strong>No data yet</strong>
-              <p>Run the scraper or adjust public Supabase access.</p>
-            </div>
-          </article>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function OverviewPage({ reviews, filtered, stats, monthly, keywords, loading, onExport, setActivePage }) {
-  const latest = filtered.slice(0, 5);
-  const maxMonthly = Math.max(1, ...monthly.map((item) => item.count));
-  const positivePct = stats.total ? Math.round((stats.positive / stats.total) * 100) : 0;
-  const negativePct = stats.total ? Math.round((stats.negative / stats.total) * 100) : 0;
-  const pros = keywords.slice(0, 3).map((item) => ({
-    ...item,
-    detail: `Mentioned ${item.count} times across summary, pros, and cons.`,
-  }));
-  const cons = keywords.slice(3, 6).map((item) => ({
-    ...item,
-    detail: `Recurring theme to inspect in the review feed.`,
-  }));
-
-  return (
-    <>
-      <section className="overview-header">
-        <div>
-          <h1>Overview Dashboard</h1>
-          <p>Real-time synthesis of user feedback, review volume, and sentiment trends.</p>
-        </div>
-        <div className="overview-actions">
-          <button className="secondary-button" type="button">
-            <CalendarDays size={17} />
-            All Time
-          </button>
-          <button className="primary-button" onClick={onExport} type="button">
-            <Download size={17} />
-            Export CSV
-          </button>
-        </div>
-      </section>
-
-      <section className="overview-kpis">
-        <Metric label="Overall Rating" value={loading ? "..." : `${stats.average}/5`} detail="average Capterra rating" />
-        <Metric label="Total Reviews" value={loading ? "..." : stats.total} detail="all rows loaded from Supabase" />
-        <Metric label="Sentiment Score" value={loading ? "..." : `${positivePct}%`} detail="reviews rated 4 stars or more" />
-        <section className="metric status-metric">
-          <span>Scrape Status</span>
-          <strong>{loading ? "..." : "Live"}</strong>
-          <small>{reviews.length} records synced</small>
-        </section>
-      </section>
-
-      <section className="overview-grid">
-        <section className="overview-chart panel">
-          <div className="panel-heading spread">
-            <div>
-              <h2>Review Volume</h2>
-              <p className="muted">Monthly ingestion trend</p>
-            </div>
-            <span className="chip">Total Reviews</span>
-          </div>
-          <div className="line-chart" aria-label="Review volume over time">
-            <svg viewBox="0 0 640 240" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="volumeGradient" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="rgba(70, 72, 212, 0.22)" />
-                  <stop offset="100%" stopColor="rgba(70, 72, 212, 0)" />
-                </linearGradient>
-              </defs>
-              {monthly.length > 1 && (
-                <>
-                  <polyline
-                    fill="none"
-                    points={monthly.slice(-8).map((item, index, arr) => {
-                      const x = (index / Math.max(1, arr.length - 1)) * 640;
-                      const y = 218 - (item.count / maxMonthly) * 178;
-                      return `${x},${y}`;
-                    }).join(" ")}
-                    stroke="#4648d4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="4"
-                  />
-                  <polygon
-                    fill="url(#volumeGradient)"
-                    points={`0,240 ${monthly.slice(-8).map((item, index, arr) => {
-                      const x = (index / Math.max(1, arr.length - 1)) * 640;
-                      const y = 218 - (item.count / maxMonthly) * 178;
-                      return `${x},${y}`;
-                    }).join(" ")} 640,240`}
-                  />
-                </>
-              )}
-            </svg>
-            <div className="axis-labels">
-              {monthly.slice(-6).map((item) => <span key={item.month}>{item.month}</span>)}
-            </div>
-          </div>
-        </section>
-
-        <section className="recent-sentiment panel">
-          <div className="panel-heading">
-            <Sparkles size={18} />
-            <h2>Recent Sentiment</h2>
-          </div>
-          <div className="sentiment-bars">
-            <div>
-              <div className="sentiment-line">
-                <span className="positive-text">Positive</span>
-                <strong>{stats.positive} reviews</strong>
-              </div>
-              <div className="soft-track"><div className="positive-fill" style={{ width: `${positivePct}%` }} /></div>
-            </div>
-            <div>
-              <div className="sentiment-line">
-                <span className="negative-text">Negative</span>
-                <strong>{stats.negative} reviews</strong>
-              </div>
-              <div className="soft-track"><div className="negative-fill" style={{ width: `${negativePct}%` }} /></div>
-            </div>
-          </div>
-          <div className="ai-summary">
-            <Sparkles size={18} />
-            <p><strong>AI Summary:</strong> Overall feedback is led by high-rating reviews, with recurring themes visible in the keyword cloud.</p>
-          </div>
-        </section>
-      </section>
-
-      <section className="topics-grid">
-        <TopicList title="Top Pros" tone="positive" icon={ThumbsUp} items={pros} />
-        <TopicList title="Top Cons" tone="negative" icon={ThumbsDown} items={cons} />
-      </section>
-
-      <section className="latest-table">
-        <div className="section-heading">
-          <div>
-            <p className="overline">Latest synthesized reviews</p>
-            <h2>Recent Reviews</h2>
-          </div>
-          <button className="link-button" onClick={() => setActivePage("reviews")} type="button">View All Reviews</button>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Rating</th>
-                <th>Key Topic</th>
-                <th>Sentiment</th>
-                <th>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {latest.map((review) => {
-                const data = review.data || {};
-                const sentiment = sentimentForRating(review.rating);
-                return (
-                  <tr key={review.fingerprint}>
-                    <td>{review.reviewer || "Verified Reviewer"}</td>
-                    <td><Stars rating={review.rating} /></td>
-                    <td>{data.reviewer_role || review.title || "Review"}</td>
-                    <td><span className={`sentiment-badge ${sentiment.toLowerCase()}`}>{sentiment}</span></td>
-                    <td>{formatDate(review.review_date)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </>
-  );
-}
-
-function SentimentPage({
-  reviews,
-  stats,
-  keywords,
-  loading,
-  error,
-  onExport,
-}) {
-  const positivePct = stats.total ? Math.round((stats.positive / stats.total) * 100) : 0;
-  const neutralPct = stats.total ? Math.round((stats.neutral / stats.total) * 100) : 0;
-  const negativePct = Math.max(0, 100 - positivePct - neutralPct);
-  const avgWords = reviews.length
-    ? Math.round(reviews.reduce((sum, review) => sum + reviewText(review).split(/\s+/).filter(Boolean).length, 0) / reviews.length)
-    : 0;
-  const nps = stats.total ? Math.round(((stats.positive - stats.negative) / stats.total) * 100) : 0;
-  const categorySpecs = [
-    {
-      name: "Features",
-      words: ["feature", "fonction", "card", "carte", "approval", "workflow", "automated", "virtual"],
-      fallback: "Virtual cards and automated approvals are top tier.",
-    },
-    {
-      name: "Pricing",
-      words: ["price", "pricing", "cost", "expensive", "plan", "prix", "tarif", "cher"],
-      fallback: "Value is high, but pricing needs monitoring for SMBs.",
-    },
-    {
-      name: "Ease of Use",
-      words: ["easy", "simple", "intuitive", "facile", "rapide", "use", "ux"],
-      fallback: "Users repeatedly mention speed, clarity, and low friction.",
-    },
-    {
-      name: "Support",
-      words: ["support", "customer", "service", "help", "assistance", "response", "réponse"],
-      fallback: "Support quality remains a category to track closely.",
-    },
-  ];
-  const categoryRows = categorySpecs.map((category) => {
-    const matches = reviews.filter((review) => {
-      const text = reviewText(review);
-      return category.words.some((word) => text.includes(word));
-    });
-    const source = matches.length ? matches : reviews;
-    const ratings = source.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
-    const average = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
-    const score = Number(average.toFixed(1));
-    const sentiment = score >= 4.6 ? "Peak" : score >= 4 ? "High" : score >= 3 ? "Mixed" : "Declining";
-    const tone = score >= 4 ? "positive" : score >= 3 ? "neutral" : "negative";
-    const volume = matches.length || 0;
-    const sample = matches.find((review) => review.data?.summary || review.title);
+function reviewToCard(review, idx) {
+    const data = review.data || {};
     return {
-      ...category,
-      score,
-      sentiment,
-      tone,
-      volume,
-      takeaway: sample?.data?.summary || sample?.title || category.fallback,
+        name: review.reviewer || "Verified Reviewer",
+        role: data.reviewer_role || data.reviewer_industry || "Capterra reviewer",
+        date: formatDate(review.review_date),
+        img: `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(review.reviewer || `review-${idx}`)}`,
+        rating: Math.round(asNumber(review.rating) || 0),
+        sentiment: sentimentForRating(review.rating),
+        verdict: data.summary || review.title || "No summary extracted for this review.",
+        pros: data.pros || "No pros extracted for this review.",
+        cons: data.cons || "No cons extracted for this review.",
     };
-  });
-
-  return (
-    <>
-      <section className="sentiment-header">
-        <div>
-          <h1>Sentiment Analysis</h1>
-          <p>A welcoming overview of real-time user perception synthesis across {reviews.length} detailed reviews.</p>
-        </div>
-        <div className="overview-actions">
-          <button className="secondary-button" onClick={onExport} type="button">
-            <Download size={17} />
-            Export
-          </button>
-          <button className="primary-button" type="button">
-            <RefreshCw size={17} />
-            Update Scan
-          </button>
-        </div>
-      </section>
-
-      {error && (
-        <div className="notice" role="alert">
-          <AlertCircle size={18} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <section className="sentiment-grid">
-        <SentimentDonut stats={stats} />
-        <div className="panel keyword-panel">
-          <div className="panel-heading spread">
-            <div>
-              <p className="overline">Voice of customer</p>
-              <h2>Keyword Cloud</h2>
-            </div>
-            <span className="chip">{keywords.length} terms</span>
-          </div>
-          <KeywordCloud words={keywords} />
-        </div>
-      </section>
-
-      <section className="category-performance">
-        <div className="category-heading">
-          <h2>Categorized Performance</h2>
-          <button className="secondary-button" type="button">Last 30 Days</button>
-        </div>
-        <div className="category-table-wrap">
-          <table className="category-table">
-            <thead>
-              <tr>
-                <th>Category</th>
-                <th>Score</th>
-                <th>Sentiment Trend</th>
-                <th>Key Takeaway</th>
-                <th>Volume</th>
-              </tr>
-            </thead>
-            <tbody>
-              {categoryRows.map((row) => (
-                <tr key={row.name}>
-                  <td>{row.name}</td>
-                  <td><span className={`score-pill ${row.tone}`}>{row.score || "..."}</span></td>
-                  <td>
-                    <div className="trend-inline">
-                      <div className="trend-track">
-                        <div className={`trend-fill ${row.tone}`} style={{ width: `${Math.max(8, (row.score / 5) * 100)}%` }} />
-                      </div>
-                      <span className={row.tone}>{row.sentiment}</span>
-                    </div>
-                  </td>
-                  <td><em>"{row.takeaway}"</em></td>
-                  <td>{row.volume} reviews</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="sentiment-bento">
-        <article className="sentiment-metric-card">
-          <h2>Net Promoter Score</h2>
-          <div className="big-number">{nps}</div>
-          <div className="mini-track-label">
-            <span>Promoters ({positivePct}%)</span>
-            <strong>{stats.positive}</strong>
-          </div>
-          <div className="soft-track"><div className="positive-fill" style={{ width: `${positivePct}%` }} /></div>
-        </article>
-        <article className="sentiment-metric-card">
-          <h2>Avg. Review Length</h2>
-          <div className="big-number">{avgWords} <span>words</span></div>
-          <p>Users are providing detailed feedback, indicating trust and engagement with the platform's core workflows.</p>
-        </article>
-        <article className="sentiment-synthesis">
-          <h2>Strategic Synthesis</h2>
-          <p>Overall sentiment is {positivePct >= 70 ? "strongly positive" : "balanced"}, with {positivePct}% positive reviews, {neutralPct}% neutral reviews, and {negativePct}% negative reviews. Pricing and support remain the categories to monitor.</p>
-        </article>
-      </section>
-    </>
-  );
 }
 
-function ReviewsPage({
-  filtered,
-  reviews,
-  stats,
-  loading,
-  error,
-  onExport,
-  ratingFilter,
-  setRatingFilter,
-  sentimentFilter,
-  setSentimentFilter,
-  sortMode,
-  setSortMode,
-}) {
-  return (
-    <section className="reviews-page">
-      <div className="reviews-main">
-        <section className="reviews-header">
-          <div>
-            <span className="status-pill">Extracting: Spendesk</span>
-            <h1>Review Feed</h1>
-            <p>Latest verified feedback from Capterra users, loaded from Supabase.</p>
-          </div>
-          <button className="secondary-button" onClick={onExport} type="button">
-            <Download size={17} />
-            Export CSV
-          </button>
-        </section>
+function compactText(value, fallback) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text) return fallback;
+    return text.length > 190 ? `${text.slice(0, 187)}...` : text;
+}
 
-        {error && (
-          <div className="notice" role="alert">
-            <AlertCircle size={18} />
-            <span>{error}</span>
-          </div>
-        )}
+function buildHighlights(reviews, field, fallbackItems) {
+    const icons = field === "pros"
+        ? ["speed", "account_balance_wallet", "integration_instructions"]
+        : ["euro", "receipt_long", "notifications_active"];
+    const source = reviews
+        .map((review) => review.data?.[field])
+        .filter((text) => text && String(text).trim().length > 35)
+        .slice(0, 3);
+    if (!source.length) return fallbackItems;
+    return source.map((text, idx) => ({
+        icon: icons[idx % icons.length],
+        title: field === "pros" ? `Recurring advantage #${idx + 1}` : `Recurring friction #${idx + 1}`,
+        desc: compactText(text, ""),
+    }));
+}
 
-        <div className="review-list spacious">
-          {filtered.map((review) => {
-            const data = review.data || {};
-            const sentiment = sentimentForRating(review.rating);
+function buildCategoryRows(reviews) {
+    const specs = [
+        { cat: "Features", words: ["feature", "features", "card", "virtual", "workflow", "approval"], quote: '"Virtual cards and automated approvals are top tier."' },
+        { cat: "Pricing", words: ["price", "pricing", "cost", "expensive", "plan", "value", "money"], quote: '"Value is high, but entry price is steep for SMBs."' },
+        { cat: "Ease of Use", words: ["easy", "simple", "intuitive", "facile", "ux", "quick", "fast"], quote: '"Incredibly intuitive UX, almost zero learning curve."' },
+        { cat: "Support", words: ["support", "customer", "service", "response", "help"], quote: '"Support quality remains an important operational signal."' },
+    ];
+    return specs.map((spec) => {
+        const matched = reviews.filter((review) => spec.words.some((word) => reviewText(review).includes(word)));
+        const source = matched.length ? matched : reviews;
+        const ratings = source.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
+        const scoreNumber = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
+        const score = scoreNumber ? scoreNumber.toFixed(1) : "0.0";
+        const trendNumber = Math.round((scoreNumber / 5) * 100);
+        const tone = scoreNumber >= 4 ? "positive" : scoreNumber >= 3 ? "neutral" : "negative";
+        const sample = matched.find((review) => review.data?.summary || review.title);
+        return {
+            cat: spec.cat,
+            score,
+            color: tone === "positive" ? "bg-secondary-fixed text-on-secondary-fixed" : tone === "neutral" ? "bg-surface-container text-on-surface-variant" : "bg-error-container text-on-error-container",
+            trend: `${Math.max(6, trendNumber)}%`,
+            trendL: scoreNumber >= 4.6 ? "Peak" : scoreNumber >= 4 ? "High" : scoreNumber >= 3 ? "Mixed" : "Declining",
+            trendC: tone === "positive" ? "bg-on-tertiary-container" : tone === "neutral" ? "bg-outline" : "bg-error",
+            quote: `"${compactText(sample?.data?.summary || sample?.title, spec.quote.replaceAll('"', ""))}"`,
+        };
+    });
+}
+        // --- Shared Components ---
+
+        const Sidebar = ({ activePage, setActivePage }) => {
+    const navItems = [
+        { path: 'overview', label: 'Overview', icon: 'dashboard' },
+        { path: 'sentiment', label: 'Sentiment', icon: 'analytics' },
+        { path: 'reviews', label: 'Reviews', icon: 'forum' },
+        { path: 'trends', label: 'Trends', icon: 'trending_up' }
+    ];
+
+    return (
+        <aside className="w-64 h-full fixed left-0 top-0 bg-surface-container-lowest dark:bg-surface-container-lowest shadow-sm flex flex-col py-10 z-50">
+            <div className="px-6 mb-10">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-secondary rounded-lg flex items-center justify-center">
+                        <span className="material-symbols-outlined text-white" style={{fontVariationSettings: "'FILL' 1"}}>analytics</span>
+                    </div>
+                    <div>
+                        <h1 className="text-headline-md font-bold text-primary leading-tight">Spendesk</h1>
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-on-surface-variant font-extrabold">Insights</p>
+                    </div>
+                </div>
+            </div>
+            <nav className="flex-grow space-y-1 px-4">
+                {navItems.map(item => (
+                    <button
+                        key={item.path}
+                        type="button"
+                        onClick={() => setActivePage(item.path)}
+                        className={`w-full flex items-center gap-3 px-4 py-3 transition-all duration-200 rounded-xl ${activePage === item.path ? 'text-secondary font-bold bg-secondary/5' : 'text-on-surface-variant hover:bg-surface-container-low hover:text-primary'}`}
+                    >
+                        <span className="material-symbols-outlined" style={{fontVariationSettings: activePage === item.path ? "'FILL' 1" : ""}}>{item.icon}</span>
+                        <span className="text-label-md">{item.label}</span>
+                    </button>
+                ))}
+            </nav>
+            <div className="mt-auto px-4 space-y-1 border-t border-outline-variant pt-6">
+                <a className="flex items-center gap-3 px-4 py-3 transition-all duration-200 text-on-surface-variant hover:bg-surface-container-low hover:text-primary rounded-xl" href="#">
+                    <span className="material-symbols-outlined">settings</span>
+                    <span className="text-label-md">Settings</span>
+                </a>
+                <a className="flex items-center gap-3 px-4 py-3 transition-all duration-200 text-on-surface-variant hover:bg-surface-container-low hover:text-primary rounded-xl" href="#">
+                    <span className="material-symbols-outlined">help</span>
+                    <span className="text-label-md">Support</span>
+                </a>
+            </div>
+        </aside>
+    );
+};
+
+        const TopBar = ({ title = "Search insights..." }) => {
             return (
-              <article className="review-card large" key={review.fingerprint}>
-                <div className="review-head">
-                  <div className="avatar large-avatar" aria-hidden="true">
-                    {(review.reviewer || "U").slice(0, 1).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3>{review.reviewer || "Verified Reviewer"}</h3>
-                    <div className="review-meta">
-                      <span>{data.reviewer_role || data.reviewer_industry || "Capterra reviewer"}</span>
-                      <span>{formatDate(review.review_date)}</span>
+                <header className="w-full h-20 fixed top-0 z-40 bg-surface/80 backdrop-blur-md flex justify-between items-center px-lg ml-64 max-w-[calc(100%-16rem)]">
+                    <div className="flex items-center flex-1 max-w-xl">
+                        <div className="relative w-full">
+                            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+                            <input className="w-full bg-surface-container-low border-none rounded-full pl-12 pr-6 py-2.5 text-label-md focus:ring-2 focus:ring-secondary/20 transition-all" placeholder={title} type="text"/>
+                        </div>
                     </div>
-                  </div>
-                  <div className="review-rating">
-                    <Stars rating={review.rating} />
-                    <span className={`sentiment-badge ${sentiment.toLowerCase()}`}>{sentiment}</span>
-                  </div>
-                </div>
-
-                <div className="verdict featured">
-                  <span>Overall verdict</span>
-                  <strong>{review.title || "Untitled review"}</strong>
-                  {data.summary && <p>{data.summary}</p>}
-                </div>
-
-                <div className="pros-cons">
-                  <div className="pros">
-                    <span><CheckCircle2 size={15} /> Pros</span>
-                    <p>{data.pros || "No pros extracted for this review."}</p>
-                  </div>
-                  <div className="cons">
-                    <span><AlertCircle size={15} /> Cons</span>
-                    <p>{data.cons || "No cons extracted for this review."}</p>
-                  </div>
-                </div>
-              </article>
+                    <div className="flex items-center gap-6">
+                        <button className="relative w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low hover:text-primary transition-all">
+                            <span className="material-symbols-outlined">notifications</span>
+                            <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full border-2 border-surface"></span>
+                        </button>
+                        <button className="w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low hover:text-primary transition-all">
+                            <span className="material-symbols-outlined">apps</span>
+                        </button>
+                        <div className="h-8 w-[1px] bg-outline-variant"></div>
+                        <div className="flex items-center gap-3 bg-surface-container-low hover:bg-surface-container-high p-1.5 pr-4 rounded-full transition-all cursor-pointer group">
+                            <img className="w-10 h-10 rounded-full border-2 border-surface-container-high object-cover shadow-sm" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBSBEWXrKutEelc0KR3VM4wfCi2PzljlMSk6amtIej72mwbV1WIJ3J9iNzwZVPCgIaoYb01CY1lOFH7vjLe7DWdRdJDEWViT-f_H2fLIsK6IM5eV8psWL6MMYBl_l7iNjnFSTn9RN_DTLpWZYPtP0QBMtgg-XDBXtVjzO19AY0rmWm-PDPeVQPJZ5JfKxJ6BaO99r-z5-dv-s3mKXrXS54vXvxqNI0jQi9WfnKrtnzbfrkbezV6gT5Yew"/>
+                            <div className="hidden lg:block text-left ml-2">
+                                <p className="text-label-md font-bold text-primary leading-tight group-hover:text-secondary transition-colors">Alex Rivera</p>
+                                <p className="text-[10px] text-on-surface-variant font-label-sm uppercase tracking-widest">Admin</p>
+                            </div>
+                        </div>
+                    </div>
+                </header>
             );
-          })}
-          {!loading && filtered.length === 0 && <div className="empty">No reviews match these filters.</div>}
-          {loading && <div className="empty">Loading reviews...</div>}
-        </div>
-      </div>
+        };
 
-      <aside className="reviews-filter-panel">
-        <div className="filter-title">
-          <SlidersHorizontal size={18} />
-          <h2>Filters</h2>
-        </div>
+        // --- Pages ---
 
-        <label>
-          Filter by Rating
-          <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} aria-label="Filter by rating">
-            <option value="all">All ratings</option>
-            <option value="5">5 stars</option>
-            <option value="4">4 stars</option>
-            <option value="3">3 stars</option>
-            <option value="2">2 stars</option>
-            <option value="1">1 star</option>
-          </select>
-        </label>
+        const OverviewPage = () => {
+            const { analytics, topPros, topCons } = useInsights();
+            return (
+                <div className="animate-fade-in">
+                    <TopBar />
+                    <main className="ml-64 pt-28 pb-16 px-lg">
+                        <div className="max-w-[1400px] mx-auto">
+                            <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-4">
+                                <div>
+                                    <h2 className="text-display font-extrabold text-primary mb-1">Overview Dashboard</h2>
+                                    <p className="text-on-surface-variant text-body-lg">Real-time synthesis of user feedback and sentiment trends.</p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <button className="flex items-center gap-2 px-6 py-3 border border-outline-variant text-on-surface font-label-md rounded-full hover:bg-surface-container-low transition-all">
+                                        <span className="material-symbols-outlined text-[20px]">calendar_today</span>
+                                        Last 30 Days
+                                    </button>
+                                    <button className="flex items-center gap-2 px-6 py-3 bg-secondary text-white font-label-md rounded-full shadow-lg shadow-secondary/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
+                                        <span className="material-symbols-outlined text-[20px]">download</span>
+                                        Export PDF
+                                    </button>
+                                </div>
+                            </div>
 
-        <label>
-          Sentiment Analysis
-          <select value={sentimentFilter} onChange={(event) => setSentimentFilter(event.target.value)} aria-label="Filter by sentiment">
-            <option value="all">All sentiments</option>
-            <option value="Positive">Positive</option>
-            <option value="Neutral">Neutral</option>
-            <option value="Negative">Negative</option>
-          </select>
-        </label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-md mb-md">
+                                <div className="bg-surface-container-lowest p-8 rounded-lg data-card-shadow">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <span className="text-label-sm text-on-surface-variant uppercase tracking-widest font-bold">Overall Rating</span>
+                                        <div className="w-10 h-10 rounded-full bg-secondary/10 flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-secondary text-[20px]" style={{fontVariationSettings: "'FILL' 1"}}>star</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-baseline gap-2">
+                                        <span className="text-display text-primary">{analytics.average}</span>
+                                        <span className="text-on-surface-variant text-body-md">/ 5</span>
+                                    </div>
+                                    <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
+                                        <span className="material-symbols-outlined text-[16px] mr-1">trending_up</span>
+                                        +0.2 vs last month
+                                    </div>
+                                </div>
+                                <div className="bg-surface-container-lowest p-8 rounded-lg data-card-shadow">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <span className="text-label-sm text-on-surface-variant uppercase tracking-widest font-bold">Total Reviews</span>
+                                        <div className="w-10 h-10 rounded-full bg-secondary/10 flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-secondary text-[20px]">reviews</span>
+                                        </div>
+                                    </div>
+                                    <div className="text-display text-primary">{analytics.totalLabel}</div>
+                                    <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
+                                        <span className="material-symbols-outlined text-[16px] mr-1">trending_up</span>
+                                        +12% Monthly Growth
+                                    </div>
+                                </div>
+                                <div className="bg-surface-container-lowest p-8 rounded-lg data-card-shadow">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <span className="text-label-sm text-on-surface-variant uppercase tracking-widest font-bold">Sentiment Score</span>
+                                        <div className="w-10 h-10 rounded-full bg-secondary/10 flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-secondary text-[20px]">sentiment_satisfied</span>
+                                        </div>
+                                    </div>
+                                    <div className="text-display text-primary">{analytics.positivePctLabel}</div>
+                                    <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
+                                        <span className="material-symbols-outlined text-[16px] mr-1">check_circle</span>
+                                        Stable synthesis
+                                    </div>
+                                </div>
+                                <div className="bg-secondary p-8 rounded-lg data-card-shadow text-white relative overflow-hidden">
+                                    <div className="relative z-10">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <span className="text-label-sm text-secondary-fixed uppercase tracking-widest font-bold">Scrape Status</span>
+                                            <span className="w-2.5 h-2.5 bg-tertiary-fixed-dim rounded-full animate-pulse shadow-[0_0_8px_rgba(79,219,200,0.8)]"></span>
+                                        </div>
+                                        <div className="text-headline-md font-extrabold mb-1">{analytics.statusLabel}</div>
+                                        <p className="text-secondary-fixed/80 text-label-sm font-medium">{analytics.totalLabel} Supabase records loaded</p>
+                                    </div>
+                                    <div className="absolute right-[-20px] bottom-[-20px] opacity-10 rotate-12">
+                                        <span className="material-symbols-outlined text-[160px]">hub</span>
+                                    </div>
+                                </div>
+                            </div>
 
-        <label>
-          Sort
-          <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort reviews">
-            <option value="date-desc">Newest first</option>
-            <option value="rating-desc">Best rating</option>
-            <option value="rating-asc">Lowest rating</option>
-          </select>
-        </label>
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-md mb-md">
+                                <div className="lg:col-span-2 bg-surface-container-lowest p-8 rounded-lg data-card-shadow">
+                                    <div className="flex items-center justify-between mb-8">
+                                        <div>
+                                            <h3 className="text-headline-md font-bold text-primary">Review Volume</h3>
+                                            <p className="text-on-surface-variant text-body-md">Trends over the last 6 months</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-3 h-3 rounded-full bg-secondary"></span>
+                                            <span className="text-label-sm font-bold text-on-surface-variant">Total Reviews</span>
+                                        </div>
+                                    </div>
+                                    <div className="h-72 relative chart-grid border-l border-b border-outline-variant/30">
+                                        <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none" viewBox="0 0 600 200">
+                                            <defs>
+                                                <linearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
+                                                    <stop offset="0%" stopColor="rgba(70, 72, 212, 0.15)"></stop>
+                                                    <stop offset="100%" stopColor="rgba(70, 72, 212, 0)"></stop>
+                                                </linearGradient>
+                                            </defs>
+                                            <path d="M0,180 L100,150 L200,160 L300,100 L400,110 L500,60 L600,40" fill="none" stroke="#4648d4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4"></path>
+                                            <path d="M0,180 L100,150 L200,160 L300,100 L400,110 L500,60 L600,40 L600,200 L0,200 Z" fill="url(#chartGradient)"></path>
+                                            <circle cx="100" cy="150" fill="#4648d4" r="5"></circle>
+                                            <circle cx="300" cy="100" fill="#4648d4" r="5"></circle>
+                                            <circle cx="500" cy="60" fill="#4648d4" r="5"></circle>
+                                            <circle cx="600" cy="40" fill="#4648d4" r="8" stroke="white" strokeWidth="3"></circle>
+                                        </svg>
+                                        <div className="absolute bottom-[-32px] left-0 w-full flex justify-between text-[11px] text-on-surface-variant uppercase font-extrabold tracking-widest">
+                                            <span>January</span>
+                                            <span>February</span>
+                                            <span>March</span>
+                                            <span>April</span>
+                                            <span>May</span>
+                                            <span>June</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-surface-container-lowest p-8 rounded-lg data-card-shadow flex flex-col">
+                                    <h3 className="text-headline-md font-bold text-primary mb-2">Recent Sentiment</h3>
+                                    <p className="text-on-surface-variant text-body-sm mb-8">Aggregate feedback polarity from latest reviews.</p>
+                                    <div className="space-y-8">
+                                        <div>
+                                            <div className="flex justify-between items-center mb-3">
+                                                <span className="px-4 py-1.5 rounded-full bg-on-tertiary-container/10 text-on-tertiary-container text-label-sm font-extrabold">POSITIVE</span>
+                                                <span className="text-label-md font-bold text-on-tertiary-container">{analytics.positive} Reviews</span>
+                                            </div>
+                                            <div className="w-full h-3 bg-surface-container-high rounded-full overflow-hidden">
+                                                <div className="h-full bg-on-tertiary-container rounded-full" style={{width: analytics.positivePctLabel}}></div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="flex justify-between items-center mb-3">
+                                                <span className="px-4 py-1.5 rounded-full bg-error/10 text-error text-label-sm font-extrabold">NEGATIVE</span>
+                                                <span className="text-label-md font-bold text-error">{analytics.negative} Reviews</span>
+                                            </div>
+                                            <div className="w-full h-3 bg-surface-container-high rounded-full overflow-hidden">
+                                                <div className="h-full bg-error rounded-full" style={{width: analytics.negativePctLabel}}></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="mt-auto pt-8 border-t border-outline-variant">
+                                        <div className="flex items-start gap-4 p-5 rounded-lg bg-surface-container-low border border-on-tertiary-container/10 shadow-sm">
+                                            <span className="material-symbols-outlined text-on-tertiary-container mt-0.5">auto_awesome</span>
+                                            <div className="text-body-sm leading-relaxed">
+                                                <span className="font-extrabold text-on-tertiary-container">AI Summary:</span> Overall sentiment is exceptionally strong in financial compliance.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
-        <div className="scrape-status">
-          <span>Scrape Status</span>
-          <strong>{stats.total}</strong>
-          <small>{loading ? "Loading..." : `${filtered.length} reviews shown`}</small>
-        </div>
-      </aside>
-    </section>
-  );
-}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+                                <div className="bg-surface-container-lowest rounded-lg data-card-shadow overflow-hidden">
+                                    <div className="bg-on-tertiary-container/5 px-8 py-5 flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-on-tertiary-container/10 flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-on-tertiary-container">thumb_up</span>
+                                        </div>
+                                        <h3 className="text-headline-md font-extrabold text-on-tertiary-container">Top Pros</h3>
+                                    </div>
+                                    <div className="p-8 space-y-6">
+                                        {topPros.map((pro, idx) => (
+                                            <div key={idx} className="flex items-start gap-5">
+                                                <div className="w-12 h-12 rounded-xl bg-surface-container-low flex items-center justify-center flex-shrink-0 text-secondary">
+                                                    <span className="material-symbols-outlined">{pro.icon}</span>
+                                                </div>
+                                                <div>
+                                                    <p className="font-extrabold text-body-lg text-primary">{pro.title}</p>
+                                                    <p className="text-body-md text-on-surface-variant">{pro.desc}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="bg-surface-container-lowest rounded-lg data-card-shadow overflow-hidden">
+                                    <div className="bg-error/5 px-8 py-5 flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-error/10 flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-error">thumb_down</span>
+                                        </div>
+                                        <h3 className="text-headline-md font-extrabold text-error">Top Cons</h3>
+                                    </div>
+                                    <div className="p-8 space-y-6">
+                                        {topCons.map((con, idx) => (
+                                            <div key={idx} className="flex items-start gap-5">
+                                                <div className="w-12 h-12 rounded-xl bg-surface-container-low flex items-center justify-center flex-shrink-0 text-secondary">
+                                                    <span className="material-symbols-outlined">{con.icon}</span>
+                                                </div>
+                                                <div>
+                                                    <p className="font-extrabold text-body-lg text-primary">{con.title}</p>
+                                                    <p className="text-body-md text-on-surface-variant">{con.desc}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
 
-function App() {
-  const [reviews, setReviews] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
-  const [ratingFilter, setRatingFilter] = useState("all");
-  const [sentimentFilter, setSentimentFilter] = useState("all");
-  const [sortMode, setSortMode] = useState("date-desc");
-  const [activePage, setActivePage] = useState("overview");
+        const ReviewsPage = () => {
+            const { reviews, analytics, loading } = useInsights();
+            const cards = reviews.slice(0, 50).map(reviewToCard);
+            return (
+                <div className="animate-fade-in flex flex-col h-screen">
+                    <TopBar title="Search reviews..." />
+                    <main className="ml-64 pt-20 flex flex-1 overflow-hidden">
+                        <section className="flex-1 overflow-y-auto px-container-padding py-10 bg-background">
+                            <div className="max-w-4xl mx-auto space-y-8">
+                                <div className="flex items-end justify-between mb-10">
+                                    <div>
+                                        <span className="text-[10px] font-bold text-on-tertiary-container bg-tertiary-fixed-dim/30 px-3 py-1 rounded-full uppercase tracking-[0.15em] mb-3 inline-block">Extracting: Spendesk</span>
+                                        <h2 className="text-headline-lg font-bold text-primary tracking-tight">Review Feed</h2>
+                                        <p className="text-on-surface-variant font-body-md mt-1 opacity-80">Latest verified feedback from Capterra users.</p>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <button onClick={() => exportCsv(reviews)} className="flex items-center gap-2 px-6 py-2.5 bg-surface-container-lowest border border-outline-variant/30 text-label-md font-bold rounded-lg hover:bg-surface-container hover:border-secondary/30 hover:text-secondary transition-all shadow-sm">
+                                            <span className="material-symbols-outlined text-[18px]">download</span>
+                                            Export CSV
+                                        </button>
+                                    </div>
+                                </div>
 
-  async function load() {
-    setLoading(true);
-    setError("");
-    try {
-      setReviews(await fetchAllReviews());
-    } catch (err) {
-      setError(err.message || String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
+                                <div className="space-y-6">
+                                    {cards.map((review, idx) => (
+                                        <article key={idx} className="bg-surface-container-lowest border border-outline-variant/20 rounded-lg p-8 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+                                            <div className="flex items-start justify-between mb-6">
+                                                <div className="flex items-center gap-5">
+                                                    <img className="w-14 h-14 rounded-full object-cover ring-4 ring-surface-container-low" src={review.img}/>
+                                                    <div>
+                                                        <h3 className="font-bold text-primary text-body-lg">{review.name}</h3>
+                                                        <div className="flex items-center gap-2 text-on-surface-variant font-label-md">
+                                                            <span>{review.role}</span>
+                                                            <span className="text-outline-variant opacity-50">•</span>
+                                                            <time className="opacity-70">{review.date}</time>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="flex items-center text-secondary mb-2">
+                                                        {[1,2,3,4,5].map(s => <span key={s} className="material-symbols-outlined text-lg" style={{fontVariationSettings: s <= review.rating ? "'FILL' 1" : ""}}>star</span>)}
+                                                    </div>
+                                                    <span className="text-[10px] font-extrabold text-on-tertiary-container bg-tertiary-fixed-dim/20 px-3 py-1 rounded-full uppercase tracking-wider">{review.sentiment}</span>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-6">
+                                                <div>
+                                                    <h4 className="font-label-sm text-secondary uppercase text-[10px] mb-2 font-extrabold tracking-widest opacity-80">Overall Verdict</h4>
+                                                    <p className="text-body-lg font-semibold leading-relaxed text-primary">{review.verdict}</p>
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                    <div className="bg-tertiary-fixed/10 p-5 rounded-lg border border-tertiary-fixed/20">
+                                                        <h4 className="font-label-sm text-on-tertiary-container uppercase text-[10px] mb-3 flex items-center gap-2 font-extrabold tracking-widest">
+                                                            <span className="material-symbols-outlined text-sm bg-tertiary-fixed-dim text-on-tertiary rounded-full p-0.5">add</span> Pros
+                                                        </h4>
+                                                        <p className="text-body-md text-on-surface-variant leading-relaxed">{review.pros}</p>
+                                                    </div>
+                                                    <div className="bg-error-container/10 p-5 rounded-lg border border-error-container/30">
+                                                        <h4 className="font-label-sm text-error uppercase text-[10px] mb-3 flex items-center gap-2 font-extrabold tracking-widest">
+                                                            <span className="material-symbols-outlined text-sm bg-error/10 rounded-full p-0.5">remove</span> Cons
+                                                        </h4>
+                                                        <p className="text-body-md text-on-surface-variant leading-relaxed">{review.cons}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    ))}
+                                </div>
+                                <div className="flex justify-center py-12">
+                                    <button className="px-10 py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg hover:bg-secondary hover:scale-105 active:scale-95 transition-all">
+                                        {loading ? "Loading Reviews" : `${cards.length} / ${analytics.totalLabel} Reviews`}
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
 
-  useEffect(() => {
-    load();
-  }, []);
+                        <aside className="w-80 h-full bg-surface-container-lowest border-l border-outline-variant/30 p-8 overflow-y-auto hidden xl:block">
+                            <div className="flex items-center gap-3 mb-10">
+                                <span className="material-symbols-outlined text-secondary bg-secondary/10 p-2 rounded-lg">tune</span>
+                                <h3 className="font-headline-md text-headline-md font-extrabold text-primary">Filters</h3>
+                            </div>
+                            <div className="space-y-10">
+                                <div className="space-y-4">
+                                    <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Filter by Rating</label>
+                                    <div className="space-y-3">
+                                        <div className="flex items-center justify-between group cursor-pointer hover:bg-surface-container-low p-2 rounded-lg transition-all">
+                                            <div className="flex items-center gap-3">
+                                                <input checked type="checkbox" className="w-5 h-5 rounded-lg border-outline-variant text-secondary focus:ring-secondary/20"/>
+                                                <div className="flex items-center text-secondary text-sm">
+                                                    {[1,2,3,4,5].map(s => <span key={s} className="material-symbols-outlined text-sm" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
+                                                </div>
+                                            </div>
+                                            <span className="text-label-md text-on-surface-variant font-bold">{analytics.positive}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="space-y-4">
+                                    <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Sentiment Analysis</label>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        <button className="flex items-center justify-between px-4 py-3 bg-secondary/10 border border-secondary/30 text-secondary rounded-lg text-label-md font-bold transition-all shadow-sm">
+                                            Positive
+                                            <span className="material-symbols-outlined text-sm" style={{fontVariationSettings: "'FILL' 1"}}>check_circle</span>
+                                        </button>
+                                        <button className="flex items-center justify-between px-4 py-3 bg-surface-container-low border border-transparent text-on-surface-variant rounded-lg text-label-md font-semibold hover:bg-surface-container-high transition-all">
+                                            Neutral
+                                            <span className="material-symbols-outlined text-sm">radio_button_unchecked</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="pt-8 space-y-3">
+                                    <button className="w-full py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg active:scale-95 hover:bg-secondary transition-all">Apply Changes</button>
+                                </div>
+                                <div className="p-6 bg-secondary-fixed/50 border border-secondary/10 rounded-lg space-y-3 mt-12 relative overflow-hidden">
+                                    <div className="absolute -right-4 -top-4 w-16 h-16 bg-secondary/10 rounded-full blur-2xl"></div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-[10px] uppercase font-extrabold text-secondary tracking-widest">Scrape Status</span>
+                                        <span className="flex h-2.5 w-2.5 rounded-full bg-secondary animate-pulse"></span>
+                                    </div>
+                                    <div className="flex items-baseline gap-2">
+                                        <span className="text-[40px] font-extrabold text-primary leading-none">{analytics.totalLabel}</span>
+                                        <span className="text-label-md font-bold text-on-surface-variant opacity-70">Total</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </aside>
+                    </main>
+                    <button className="fixed bottom-10 right-10 w-16 h-16 bg-secondary text-on-secondary rounded-full shadow-lg flex items-center justify-center hover:scale-110 active:scale-90 transition-all z-50 group">
+                        <span className="material-symbols-outlined text-2xl">sync</span>
+                    </button>
+                </div>
+            );
+        };
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const items = reviews.filter((review) => {
-      const rating = asNumber(review.rating);
-      const sentiment = sentimentForRating(review.rating);
-      const matchesRating = ratingFilter === "all" || Math.round(rating || 0) === Number(ratingFilter);
-      const matchesSentiment = sentimentFilter === "all" || sentiment === sentimentFilter;
-      const matchesQuery = !q || reviewText(review).includes(q);
-      return matchesRating && matchesSentiment && matchesQuery;
-    });
-    return items.sort((a, b) => {
-      if (sortMode === "rating-desc") return (asNumber(b.rating) || 0) - (asNumber(a.rating) || 0);
-      if (sortMode === "rating-asc") return (asNumber(a.rating) || 0) - (asNumber(b.rating) || 0);
-      return String(b.review_date || b.created_at || "").localeCompare(String(a.review_date || a.created_at || ""));
-    });
-  }, [reviews, query, ratingFilter, sentimentFilter, sortMode]);
+        const SentimentPage = () => {
+            const { analytics, keywords, categoryRows } = useInsights();
+            const keywordTags = keywords.length
+                ? keywords.map((item, idx) => ({
+                    t: item.word,
+                    c: idx % 4 === 0 ? "bg-on-tertiary-container text-white" : idx % 4 === 1 ? "bg-surface-container text-on-surface-variant" : idx % 4 === 2 ? "bg-secondary-fixed text-on-secondary-fixed-variant" : "bg-secondary-container text-on-secondary-container",
+                    s: idx % 3 === 0 ? "font-headline-md px-8 py-4" : idx % 3 === 1 ? "font-body-md px-6 py-3" : "font-label-md px-5 py-2",
+                }))
+                : [
+                    { t: 'Easy to use', c: 'bg-on-tertiary-container text-white', s: 'font-headline-md px-8 py-4' },
+                    { t: 'Customer Support', c: 'bg-surface-container text-on-surface-variant', s: 'font-body-md px-6 py-3' },
+                    { t: 'Expense Management', c: 'bg-secondary-fixed text-on-secondary-fixed-variant', s: 'font-body-md font-bold px-6 py-3' },
+                ];
+            return (
+                <div className="animate-fade-in">
+                    <TopBar title="Search sentiment analytics..." />
+                    <main className="ml-72 mt-20 p-container-padding">
+                        <div className="max-w-[1440px] mx-auto space-y-10">
+                            <div className="flex justify-between items-end">
+                                <div>
+                                    <h2 className="text-display font-bold text-primary mb-2">Sentiment Analysis</h2>
+                                    <p className="text-body-md text-on-surface-variant max-w-xl">A welcoming overview of real-time user perception synthesis across {analytics.totalLabel} detailed reviews.</p>
+                                </div>
+                                <div className="flex gap-4">
+                                    <button className="px-8 py-3 bg-white border border-outline-variant text-primary rounded-xl font-label-md hover:bg-surface-container transition-all shadow-sm">EXPORT</button>
+                                    <button className="px-8 py-3 bg-secondary text-on-secondary rounded-xl font-label-md hover:bg-secondary-container transition-all shadow-md">UPDATE SCAN</button>
+                                </div>
+                            </div>
 
-  const stats = useMemo(() => {
-    const ratings = reviews.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
-    const avg = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
-    const products = new Set(reviews.map((review) => review.product_slug).filter(Boolean));
-    const positive = reviews.filter((review) => sentimentForRating(review.rating) === "Positive").length;
-    const neutral = reviews.filter((review) => sentimentForRating(review.rating) === "Neutral").length;
-    const negative = reviews.filter((review) => sentimentForRating(review.rating) === "Negative").length;
-    return {
-      total: reviews.length,
-      average: avg.toFixed(2),
-      products: products.size,
-      withResponse: reviews.filter((review) => review.data?.vendor_response).length,
-      positive,
-      neutral,
-      negative,
-    };
-  }, [reviews]);
+                            <div className="grid grid-cols-12 gap-6">
+                                <div className="col-span-12 lg:col-span-5 bg-surface-container-lowest border border-outline-variant/50 p-8 rounded-lg shadow-sm hover:shadow-md transition-all">
+                                    <div className="flex justify-between items-start mb-8">
+                                        <div>
+                                            <h3 className="font-label-md uppercase tracking-widest text-on-surface-variant mb-1">Overall Sentiment</h3>
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="font-display text-headline-lg text-primary">{analytics.average}</span>
+                                                <span className="text-on-tertiary-container bg-tertiary-fixed px-3 py-0.5 rounded-full font-label-md">+8.4% vs LY</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col items-center justify-center h-64 relative">
+                                        <svg className="w-56 h-56 transform -rotate-90" viewBox="0 0 36 36">
+                                            <circle cx="18" cy="18" fill="transparent" r="15.915" stroke="#F1F5F9" strokeWidth="4"></circle>
+                                            <circle cx="18" cy="18" fill="transparent" r="15.915" stroke="#009485" strokeDasharray="72 28" strokeDashoffset="0" strokeLinecap="round" strokeWidth="4"></circle>
+                                            <circle cx="18" cy="18" fill="transparent" r="15.915" stroke="#6063ee" strokeDasharray="18 82" strokeDashoffset="-72" strokeLinecap="round" strokeWidth="4"></circle>
+                                            <circle cx="18" cy="18" fill="transparent" r="15.915" stroke="#ba1a1a" strokeDasharray="10 90" strokeDashoffset="-90" strokeLinecap="round" strokeWidth="4"></circle>
+                                        </svg>
+                                        <div className="absolute flex flex-col items-center">
+                                            <span className="font-display text-display text-primary leading-none">{analytics.positivePctLabel}</span>
+                                            <span className="font-label-md text-on-surface-variant mt-1">POSITIVE</span>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-4 mt-10">
+                                        <div className="text-center p-3 rounded-2xl bg-on-tertiary-container/5">
+                                            <p className="text-on-tertiary-container font-bold text-lg">{analytics.positivePctLabel}</p>
+                                            <p className="font-label-md text-on-surface-variant">Positive</p>
+                                        </div>
+                                        <div className="text-center p-3 rounded-2xl bg-secondary/5">
+                                            <p className="text-secondary font-bold text-lg">{analytics.neutralPct}%</p>
+                                            <p className="font-label-md text-on-surface-variant">Neutral</p>
+                                        </div>
+                                        <div className="text-center p-3 rounded-2xl bg-error/5">
+                                            <p className="text-error font-bold text-lg">{analytics.negativePctLabel}</p>
+                                            <p className="font-label-md text-on-surface-variant">Negative</p>
+                                        </div>
+                                    </div>
+                                </div>
 
-  const distribution = useMemo(() => getDistribution(reviews), [reviews]);
-  const monthly = useMemo(() => buildMonthlySeries(reviews), [reviews]);
-  const keywords = useMemo(() => getKeywordCloud(reviews), [reviews]);
+                                <div className="col-span-12 lg:col-span-7 bg-surface-container-lowest border border-outline-variant/50 p-8 rounded-lg shadow-sm hover:shadow-md transition-all">
+                                    <h3 className="font-label-md uppercase tracking-widest text-on-surface-variant mb-8">Voice of Customer Keywords</h3>
+                                    <div className="flex flex-wrap gap-4 h-[320px] content-start">
+                                        {keywordTags.map((tag, idx) => (
+                                            <span key={idx} className={`${tag.c} ${tag.s} rounded-xl cursor-pointer hover:scale-105 transition-all shadow-sm`}>{tag.t}</span>
+                                        ))}
+                                    </div>
+                                </div>
 
-  const sharedReviewProps = {
-    filtered,
-    reviews,
-    stats,
-    distribution,
-    monthly,
-    keywords,
-    loading,
-    error,
-    onExport: () => exportCsv(filtered),
-    ratingFilter,
-    setRatingFilter,
-    sentimentFilter,
-    setSentimentFilter,
-    sortMode,
-    setSortMode,
-  };
+                                <div className="col-span-12 bg-surface-container-lowest border border-outline-variant/50 p-8 rounded-lg shadow-sm">
+                                    <div className="flex justify-between items-center mb-8">
+                                        <h3 className="font-label-md uppercase tracking-widest text-on-surface-variant">Categorized Performance</h3>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="border-b border-outline-variant/30">
+                                                    <th className="pb-6 font-label-md text-on-surface-variant px-2">CATEGORY</th>
+                                                    <th className="pb-6 font-label-md text-on-surface-variant text-center px-2">SCORE</th>
+                                                    <th className="pb-6 font-label-md text-on-surface-variant px-2">SENTIMENT TREND</th>
+                                                    <th className="pb-6 font-label-md text-on-surface-variant px-2">KEY TAKEAWAY</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {categoryRows.map((row, idx) => (
+                                                    <tr key={idx} className="border-b border-outline-variant/10 hover:bg-surface-container-low transition-all group cursor-pointer">
+                                                        <td className="py-6 font-headline-md text-primary px-2">{row.cat}</td>
+                                                        <td className="py-6 text-center px-2">
+                                                            <div className={`inline-flex items-center justify-center w-12 h-12 rounded-2xl font-bold ${row.color}`}>{row.score}</div>
+                                                        </td>
+                                                        <td className="py-6 px-2">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="h-2 w-32 bg-surface-container rounded-full overflow-hidden">
+                                                                    <div className={`h-full ${row.trendC} rounded-full`} style={{width: row.trend}}></div>
+                                                                </div>
+                                                                <span className={`font-label-md ${row.trendC.replace('bg-', 'text-')}`}>{row.trendL}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="py-6 text-body-md italic text-on-surface-variant px-2">{row.quote}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
 
-  return (
-    <div className="app-shell">
-      <aside className="side-nav">
-        <div className="brand">
-          <strong>Spendesk <span>Insights</span></strong>
-          <small>Capterra Analytics</small>
-        </div>
-        <nav>
-          <NavItem icon={LayoutDashboard} label="Overview" active={activePage === "overview"} onClick={() => setActivePage("overview")} />
-          <NavItem icon={BarChart3} label="Sentiment" active={activePage === "sentiment"} onClick={() => setActivePage("sentiment")} />
-          <NavItem icon={MessageSquareText} label="Reviews" active={activePage === "reviews"} onClick={() => setActivePage("reviews")} />
-        </nav>
-        <div className="nav-footer">
-          <NavItem icon={Settings} label="Settings" active={false} onClick={() => setActivePage("overview")} />
-        </div>
-      </aside>
+const App = () => {
+    const [activePage, setActivePage] = useState('overview');
+    return (
+        <InsightsProvider>
+            <div className="flex bg-surface min-h-screen">
+                <Sidebar activePage={activePage} setActivePage={setActivePage} />
+                <div className="flex-1">
+                    {activePage === 'reviews' ? <ReviewsPage /> : activePage === 'sentiment' ? <SentimentPage /> : <OverviewPage />}
+                </div>
+            </div>
+        </InsightsProvider>
+    );
+};
 
-      <header className="topbar">
-        <label className="global-search">
-          <Search size={18} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search every review field" />
-        </label>
-        <div className="top-actions">
-          <button className="round-button" aria-label="Notifications">
-            <Bell size={18} />
-          </button>
-          <button className="primary-button" onClick={load}>
-            <RefreshCw size={17} />
-            Refresh
-          </button>
-        </div>
-      </header>
+createRoot(document.getElementById('root')).render(<App />);
 
-      <main className="content">
-        {error && activePage === "overview" && (
-          <div className="notice" role="alert">
-            <AlertCircle size={18} />
-            <span>{error}</span>
-          </div>
-        )}
-        {activePage === "overview" ? (
-          <OverviewPage
-            reviews={reviews}
-            filtered={filtered}
-            stats={stats}
-            monthly={monthly}
-            keywords={keywords}
-            loading={loading}
-            onExport={() => exportCsv(filtered)}
-            setActivePage={setActivePage}
-          />
-        ) : activePage === "reviews" ? (
-          <ReviewsPage {...sharedReviewProps} />
-        ) : (
-          <SentimentPage {...sharedReviewProps} />
-        )}
-      </main>
-    </div>
-  );
-}
-
-createRoot(document.getElementById("root")).render(<App />);
