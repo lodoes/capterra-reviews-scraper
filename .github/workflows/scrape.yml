@@ -1,0 +1,60 @@
+name: Scrape Capterra Reviews
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Capterra reviews URL"
+        required: false
+        default: "https://www.capterra.com/p/157515/Spendesk/reviews/"
+      max_pages:
+        description: "Max pages to scrape (0 = all)"
+        required: false
+        default: "0"
+  schedule:
+    - cron: "0 8 * * *"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Chrome driver
+        run: seleniumbase install chromedriver
+
+      - name: Run scraper
+        shell: bash
+        run: |
+          URL="${{ github.event.inputs.url || 'https://www.capterra.com/p/157515/Spendesk/reviews/' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '0' }}"
+          python capterra_scraper.py \
+            --url "$URL" \
+            --max-pages "$MAX_PAGES" \
+            --headless \
+            --out resultats
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capterra-results
+          path: |
+            resultats/**/*.csv
+            resultats/**/*.json
+            resultats/debug/**/*.html
+          if-no-files-found: warn
