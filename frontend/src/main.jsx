@@ -1124,6 +1124,7 @@ function buildCategoryRows(reviews) {
         };
 
         const ReviewsPage = () => {
+            const [sortMode, setSortMode] = useState("newest");
             const {
                 reviews,
                 filteredReviews,
@@ -1140,20 +1141,50 @@ function buildCategoryRows(reviews) {
                 minDate,
                 maxDate,
             } = useInsights();
-            const cards = filteredReviews.slice(0, 50).map(reviewToCard);
+            const sortedReviews = [...filteredReviews].sort((a, b) => {
+                const dateA = parseReviewDate(a.review_date_iso || a.review_date || a.created_at).getTime();
+                const dateB = parseReviewDate(b.review_date_iso || b.review_date || b.created_at).getTime();
+                const ratingA = asNumber(a.rating) || 0;
+                const ratingB = asNumber(b.rating) || 0;
+                if (sortMode === "oldest") return (Number.isNaN(dateA) ? Infinity : dateA) - (Number.isNaN(dateB) ? Infinity : dateB);
+                if (sortMode === "rating-high") return ratingB - ratingA;
+                if (sortMode === "rating-low") return ratingA - ratingB;
+                return (Number.isNaN(dateB) ? -Infinity : dateB) - (Number.isNaN(dateA) ? -Infinity : dateA);
+            });
+            const cards = sortedReviews.slice(0, 50).map(reviewToCard);
             return (
                 <div className="animate-fade-in flex flex-col h-screen">
                     <TopBar title="Search reviews..." />
                     <main className="ml-64 pt-20 flex flex-1 overflow-hidden">
                         <section className="flex-1 overflow-y-auto px-container-padding py-10 bg-background">
                             <div className="max-w-4xl mx-auto space-y-8">
-                                <div className="flex items-end justify-between mb-10">
+                                <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-5 mb-10">
                                     <div>
                                         <span className="text-[10px] font-bold text-on-tertiary-container bg-tertiary-fixed-dim/30 px-3 py-1 rounded-full uppercase tracking-[0.15em] mb-3 inline-block">Extracting: Spendesk</span>
                                         <h2 className="text-headline-lg font-bold text-primary tracking-tight">Review Feed</h2>
                                         <p className="text-on-surface-variant font-body-md mt-1 opacity-80">Latest verified feedback from Capterra users.</p>
                                     </div>
-                                    <div className="flex gap-3">
+                                    <div className="flex flex-wrap justify-end gap-3">
+                                        <label className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant/30 rounded-lg shadow-sm">
+                                            <span className="material-symbols-outlined text-[18px] text-on-surface-variant">sort</span>
+                                            <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} className="bg-transparent border-none text-label-md font-bold text-primary focus:ring-0 p-0">
+                                                <option value="newest">Newest first</option>
+                                                <option value="oldest">Oldest first</option>
+                                                <option value="rating-high">Highest rating</option>
+                                                <option value="rating-low">Lowest rating</option>
+                                            </select>
+                                        </label>
+                                        <label className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant/30 rounded-lg shadow-sm">
+                                            <span className="material-symbols-outlined text-[18px] text-secondary" style={{fontVariationSettings: "'FILL' 1"}}>star</span>
+                                            <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} className="bg-transparent border-none text-label-md font-bold text-primary focus:ring-0 p-0">
+                                                <option value="all">All ratings</option>
+                                                <option value="5">5 stars</option>
+                                                <option value="4">4 stars</option>
+                                                <option value="3">3 stars</option>
+                                                <option value="2">2 stars</option>
+                                                <option value="1">1 star</option>
+                                            </select>
+                                        </label>
                                         <button onClick={() => exportCsv(reviews)} className="flex items-center gap-2 px-6 py-2.5 bg-surface-container-lowest border border-outline-variant/30 text-label-md font-bold rounded-lg hover:bg-surface-container hover:border-secondary/30 hover:text-secondary transition-all shadow-sm">
                                             <span className="material-symbols-outlined text-[18px]">download</span>
                                             Export CSV
