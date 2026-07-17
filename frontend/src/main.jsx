@@ -1293,8 +1293,20 @@ function buildCategoryRows(reviews) {
             );
         };
 
-        const SentimentPage = () => {
-            const { analytics, keywords, categoryRows, aiMeta } = useInsights();
+        const SentimentPage = ({ setActivePage }) => {
+            const { analytics, keywords, categoryRows, aiMeta, setQuery, setSentimentFilter, setRatingFilter } = useInsights();
+            const openReviewsBySentiment = (sentiment) => {
+                setQuery("");
+                setRatingFilter("all");
+                setSentimentFilter(sentiment);
+                setActivePage("reviews");
+            };
+            const openReviewsByKeyword = (keyword) => {
+                setQuery(keyword);
+                setRatingFilter("all");
+                setSentimentFilter("all");
+                setActivePage("reviews");
+            };
             const keywordTags = keywords.length
                 ? keywords.map((item, idx) => ({
                     t: item.word,
@@ -1349,18 +1361,18 @@ function buildCategoryRows(reviews) {
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-3 gap-4 mt-10">
-                                        <div className="text-center p-3 rounded-2xl bg-on-tertiary-container/5">
+                                        <button type="button" onClick={() => openReviewsBySentiment("Positive")} className="text-center p-3 rounded-2xl bg-on-tertiary-container/5 hover:bg-on-tertiary-container/10 transition-all cursor-pointer">
                                             <p className="text-on-tertiary-container font-bold text-lg">{analytics.scopedPositivePctLabel}</p>
                                             <p className="font-label-md text-on-surface-variant">Positive</p>
-                                        </div>
-                                        <div className="text-center p-3 rounded-2xl bg-secondary/5">
+                                        </button>
+                                        <button type="button" onClick={() => openReviewsBySentiment("Neutral")} className="text-center p-3 rounded-2xl bg-secondary/5 hover:bg-secondary/10 transition-all cursor-pointer">
                                             <p className="text-secondary font-bold text-lg">{analytics.scopedNeutralPct}%</p>
                                             <p className="font-label-md text-on-surface-variant">Neutral</p>
-                                        </div>
-                                        <div className="text-center p-3 rounded-2xl bg-error/5">
+                                        </button>
+                                        <button type="button" onClick={() => openReviewsBySentiment("Negative")} className="text-center p-3 rounded-2xl bg-error/5 hover:bg-error/10 transition-all cursor-pointer">
                                             <p className="text-error font-bold text-lg">{analytics.scopedNegativePctLabel}</p>
                                             <p className="font-label-md text-on-surface-variant">Negative</p>
-                                        </div>
+                                        </button>
                                     </div>
                                 </div>
 
@@ -1368,7 +1380,7 @@ function buildCategoryRows(reviews) {
                                     <h3 className="font-label-md uppercase tracking-widest text-on-surface-variant mb-8">Voice of Customer Keywords</h3>
                                     <div className="flex flex-wrap gap-4 h-[320px] content-start">
                                         {keywordTags.map((tag, idx) => (
-                                            <span key={idx} className={`${tag.c} ${tag.s} rounded-xl cursor-pointer hover:scale-105 transition-all shadow-sm`}>{tag.t}</span>
+                                            <button key={idx} type="button" onClick={() => openReviewsByKeyword(tag.t)} className={`${tag.c} ${tag.s} rounded-xl cursor-pointer hover:scale-105 transition-all shadow-sm text-left`}>{tag.t}</button>
                                         ))}
                                     </div>
                                 </div>
@@ -1658,7 +1670,7 @@ const App = () => {
             <div className="flex bg-surface min-h-screen">
                 <Sidebar activePage={activePage} setActivePage={setActivePage} />
                 <div className="flex-1">
-                    {activePage === 'settings' ? <SettingsPage /> : activePage === 'reviews' ? <ReviewsPage /> : activePage === 'sentiment' ? <SentimentPage /> : <OverviewPage />}
+                    {activePage === 'settings' ? <SettingsPage /> : activePage === 'reviews' ? <ReviewsPage /> : activePage === 'sentiment' ? <SentimentPage setActivePage={setActivePage} /> : <OverviewPage />}
                 </div>
             </div>
         </InsightsProvider>
