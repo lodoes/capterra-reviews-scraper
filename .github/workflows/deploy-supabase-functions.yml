@@ -23,11 +23,13 @@ jobs:
 
       - name: Configure Edge Function secrets
         run: |
+          supabase secrets set SUPABASE_URL="$SUPABASE_URL"
           supabase secrets set SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY"
           supabase secrets set MISTRAL_API_KEY="$MISTRAL_API_KEY"
           supabase secrets set MISTRAL_MODEL="${MISTRAL_MODEL:-mistral-small-latest}"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}

@@ -167,12 +167,14 @@ Ou lance le workflow GitHub Actions **Deploy Supabase Edge Functions** apres avo
 
 - `SUPABASE_ACCESS_TOKEN`
 - `SUPABASE_PROJECT_REF`
+- `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `MISTRAL_API_KEY`
 
-Puis configure au minimum le secret Supabase qui permet a la function d'ecrire les insights :
+Puis configure au minimum les secrets Supabase qui permettent a la function de lire/ecrire les insights :
 
 ```powershell
+supabase secrets set SUPABASE_URL="https://xxxx.supabase.co"
 supabase secrets set SUPABASE_SERVICE_ROLE_KEY="..."
 ```
 
