@@ -1479,10 +1479,19 @@ function buildCategoryRows(reviews) {
             const [testRunning, setTestRunning] = useState(false);
             const [testResult, setTestResult] = useState("");
             const [testError, setTestError] = useState("");
-            const [notificationDigest, setNotificationDigest] = useState(() => localStorage.getItem("spendesk_notification_digest") || "instant");
-            const [defaultWindow, setDefaultWindow] = useState(() => localStorage.getItem("spendesk_default_window") || "90");
-            const savePreference = (key, value) => {
-                localStorage.setItem(key, value);
+            const [saved, setSaved] = useState(false);
+            const [savedDigest, setSavedDigest] = useState(() => localStorage.getItem("spendesk_notification_digest") || "instant");
+            const [savedWindow, setSavedWindow] = useState(() => localStorage.getItem("spendesk_default_window") || "90");
+            const [notificationDigest, setNotificationDigest] = useState(savedDigest);
+            const [defaultWindow, setDefaultWindow] = useState(savedWindow);
+            const hasUnsavedChanges = notificationDigest !== savedDigest || defaultWindow !== savedWindow;
+            const savePreferences = () => {
+                localStorage.setItem("spendesk_notification_digest", notificationDigest);
+                localStorage.setItem("spendesk_default_window", defaultWindow);
+                setSavedDigest(notificationDigest);
+                setSavedWindow(defaultWindow);
+                setSaved(true);
+                window.setTimeout(() => setSaved(false), 1800);
             };
             const startConnectionTest = async () => {
                 setTestRunning(true);
@@ -1499,11 +1508,11 @@ function buildCategoryRows(reviews) {
             };
             const updateDigest = (value) => {
                 setNotificationDigest(value);
-                savePreference("spendesk_notification_digest", value);
+                setSaved(false);
             };
             const updateWindow = (value) => {
                 setDefaultWindow(value);
-                savePreference("spendesk_default_window", value);
+                setSaved(false);
             };
             const healthCards = [
                 {
@@ -1535,8 +1544,8 @@ function buildCategoryRows(reviews) {
                                     <h2 className="text-display font-bold text-primary mb-2">Settings</h2>
                                     <p className="text-body-md text-on-surface-variant max-w-2xl">Control how the analytics workspace refreshes, alerts you about new reviews, and validates the data connection.</p>
                                 </div>
-                                <div className="px-4 py-2 rounded-full text-label-md font-bold bg-tertiary-fixed text-on-tertiary-container">
-                                    Analytics workspace
+                                <div className={`px-4 py-2 rounded-full text-label-md font-bold ${hasUnsavedChanges ? "bg-surface-container text-on-surface-variant" : "bg-tertiary-fixed text-on-tertiary-container"}`}>
+                                    {hasUnsavedChanges ? "Unsaved changes" : saved ? "Saved" : "Analytics workspace"}
                                 </div>
                             </div>
 
@@ -1616,6 +1625,9 @@ function buildCategoryRows(reviews) {
                                         </div>
 
                                         <div className="flex flex-wrap gap-3 pt-2">
+                                            <button type="button" onClick={savePreferences} disabled={!hasUnsavedChanges} className="px-6 py-3 bg-secondary text-on-secondary rounded-xl font-label-md shadow-sm hover:bg-secondary-container transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                                                Save
+                                            </button>
                                             <button type="button" onClick={startConnectionTest} disabled={testRunning} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all disabled:opacity-60 disabled:cursor-not-allowed">
                                                 {testRunning ? "Testing..." : "Test connection"}
                                             </button>
