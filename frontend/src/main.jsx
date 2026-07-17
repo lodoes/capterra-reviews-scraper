@@ -1244,9 +1244,9 @@ function buildCategoryRows(reviews) {
                                                 key={item.value}
                                                 type="button"
                                                 onClick={() => setSortMode(item.value)}
-                                                className={`flex flex-col items-start gap-2 rounded-xl border px-4 py-3 text-left transition-all ${sortMode === item.value ? "bg-secondary/10 border-secondary/30 text-secondary shadow-sm" : "bg-surface-container-low border-transparent text-on-surface-variant hover:bg-surface-container"}`}
+                                                className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ${sortMode === item.value ? "bg-secondary/10 border-secondary/30 text-secondary shadow-sm" : "bg-surface-container-low border-transparent text-on-surface-variant hover:bg-surface-container"}`}
                                             >
-                                                <span className="material-symbols-outlined text-[20px]" style={{fontVariationSettings: sortMode === item.value ? "'FILL' 1" : ""}}>{item.icon}</span>
+                                                <span className="material-symbols-outlined text-[20px]" style={{fontVariationSettings: sortMode === item.value || item.value === "rating-high" ? "'FILL' 1" : ""}}>{item.icon}</span>
                                                 <span className="text-label-md font-bold">{item.label}</span>
                                             </button>
                                         ))}
