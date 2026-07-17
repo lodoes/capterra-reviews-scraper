@@ -258,6 +258,44 @@ async function testMistralConnection(settings) {
     return { ok: true, source: "browser fallback", model };
 }
 
+async function runAiDiagnostics() {
+    const checks = [];
+    const add = (name, ok, detail) => checks.push({ name, ok, detail });
+    add("Supabase env", Boolean(SUPABASE_URL && SUPABASE_ANON_KEY), SUPABASE_URL ? new URL(SUPABASE_URL).host : "Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY");
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return checks;
+
+    try {
+        const reviewsUrl = new URL(`${SUPABASE_URL}/rest/v1/${TABLE}`);
+        reviewsUrl.searchParams.set("select", "fingerprint");
+        reviewsUrl.searchParams.set("limit", "1");
+        const response = await fetch(reviewsUrl, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } });
+        add("Reviews table", response.ok, response.ok ? "Readable" : `${response.status}: ${(await response.text()).slice(0, 180)}`);
+    } catch (err) {
+        add("Reviews table", false, err.message || String(err));
+    }
+
+    try {
+        const insightsUrl = new URL(`${SUPABASE_URL}/rest/v1/${INSIGHTS_TABLE}`);
+        insightsUrl.searchParams.set("select", "product_slug");
+        insightsUrl.searchParams.set("limit", "1");
+        const response = await fetch(insightsUrl, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } });
+        add("Insights table", response.ok, response.ok ? "Readable" : `${response.status}: ${(await response.text()).slice(0, 180)}`);
+    } catch (err) {
+        add("Insights table", false, err.message || String(err));
+    }
+
+    try {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
+            method: "OPTIONS",
+            headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+        });
+        add("Edge Function", response.ok, response.ok ? "Reachable" : `${response.status}: deploy analyze-mistral or use browser fallback`);
+    } catch (err) {
+        add("Edge Function", false, err.message || String(err));
+    }
+    return checks;
+}
+
 function isFilterableReview(review) {
     return asNumber(review.rating) !== null && !Number.isNaN(parseReviewDate(review.review_date_iso || review.review_date || review.created_at).getTime());
 }
@@ -1344,6 +1382,8 @@ function buildCategoryRows(reviews) {
             const [testRunning, setTestRunning] = useState(false);
             const [testResult, setTestResult] = useState("");
             const [testError, setTestError] = useState("");
+            const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
+            const [diagnostics, setDiagnostics] = useState([]);
             const maskedKey = settings.apiKey ? `${settings.apiKey.slice(0, 10)}${"•".repeat(Math.max(0, Math.min(18, settings.apiKey.length - 10)))}` : "No key saved";
             const command = [
                 '$env:SUPABASE_URL="https://xxxx.supabase.co"',
@@ -1385,6 +1425,14 @@ function buildCategoryRows(reviews) {
                     setTestError(err.message || String(err));
                 } finally {
                     setTestRunning(false);
+                }
+            };
+            const startDiagnostics = async () => {
+                setDiagnosticsRunning(true);
+                try {
+                    setDiagnostics(await runAiDiagnostics());
+                } finally {
+                    setDiagnosticsRunning(false);
                 }
             };
             const resetSettings = () => {
@@ -1509,6 +1557,36 @@ function buildCategoryRows(reviews) {
                                                 <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Model</p>
                                                 <p className="font-label-md">{settings.model || DEFAULT_MISTRAL_SETTINGS.model}</p>
                                             </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-surface-container-lowest border border-outline-variant/40 rounded-lg p-6 shadow-sm">
+                                        <div className="flex items-start justify-between gap-4 mb-4">
+                                            <div>
+                                                <h3 className="text-headline-sm font-extrabold text-primary mb-2">AI diagnostics</h3>
+                                                <p className="text-body-sm text-on-surface-variant">Check Supabase tables and Edge Function reachability before running the full analysis.</p>
+                                            </div>
+                                            <button type="button" onClick={startDiagnostics} disabled={diagnosticsRunning} className="px-4 py-2 rounded-xl bg-surface-container-low text-primary font-label-md hover:bg-surface-container transition-all disabled:opacity-60">
+                                                {diagnosticsRunning ? "Checking" : "Run"}
+                                            </button>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {(diagnostics.length ? diagnostics : [
+                                                { name: "Supabase env", ok: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY), detail: SUPABASE_URL ? new URL(SUPABASE_URL).host : "Not checked yet" },
+                                                { name: "Reviews table", ok: null, detail: "Run diagnostics" },
+                                                { name: "Insights table", ok: null, detail: "Run diagnostics" },
+                                                { name: "Edge Function", ok: null, detail: "Run diagnostics" },
+                                            ]).map((check) => (
+                                                <div key={check.name} className="flex items-center justify-between gap-3 rounded-xl bg-surface-container-low px-4 py-3">
+                                                    <div>
+                                                        <p className="font-bold text-label-md text-primary">{check.name}</p>
+                                                        <p className="text-[11px] text-on-surface-variant break-all">{check.detail}</p>
+                                                    </div>
+                                                    <span className={`material-symbols-outlined ${check.ok === true ? "text-secondary" : check.ok === false ? "text-error" : "text-outline"}`}>
+                                                        {check.ok === true ? "check_circle" : check.ok === false ? "error" : "radio_button_unchecked"}
+                                                    </span>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
 
