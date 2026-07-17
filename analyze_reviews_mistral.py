@@ -107,6 +107,13 @@ def call_mistral(api_key: str, model: str, messages: list[dict[str, str]]) -> di
     return json.loads(content)
 
 
+def test_mistral(api_key: str, model: str) -> dict[str, Any]:
+    return call_mistral(api_key, model, [
+        {"role": "system", "content": "Return only valid JSON."},
+        {"role": "user", "content": '{"ok": true, "message": "connection test"}'},
+    ])
+
+
 def save_insights(
     supabase_url: str,
     supabase_key: str,
@@ -138,11 +145,18 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=240, help="Nombre de reviews envoyees a Mistral.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--prompt", default=os.environ.get("MISTRAL_REVIEW_PROMPT", DEFAULT_REVIEW_PROMPT))
+    parser.add_argument("--test-only", action="store_true", help="Teste seulement la connexion Mistral, sans Supabase.")
     args = parser.parse_args()
+
+    mistral_key = require_env("MISTRAL_API_KEY")
+
+    if args.test_only:
+        result = test_mistral(mistral_key, args.model)
+        print(f"Connexion Mistral OK avec {args.model}: {json.dumps(result, ensure_ascii=False)}")
+        return
 
     supabase_url = require_env("SUPABASE_URL")
     supabase_key = require_env("SUPABASE_SERVICE_ROLE_KEY")
-    mistral_key = require_env("MISTRAL_API_KEY")
 
     reviews = fetch_reviews(supabase_url, supabase_key, args.product_slug, args.limit)
     if not reviews:

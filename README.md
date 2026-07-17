@@ -128,6 +128,12 @@ Pour tester la cle Mistral sans l'ecrire dans une commande ni dans le repo :
 
 Le script demande la cle en saisie masquee si `MISTRAL_API_KEY` n'est pas deja defini.
 
+Tu peux aussi utiliser GitHub Actions :
+
+1. Ajoute les secrets `MISTRAL_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+2. Lance le workflow **Run Mistral Analysis**.
+3. Choisis `test-only` pour tester la cle, ou `analyze` pour generer et sauvegarder les insights dans Supabase.
+
 ### Depuis l'interface Settings
 
 Le dashboard contient une page **Settings** avec :

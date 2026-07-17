@@ -1,0 +1,53 @@
+name: Run Mistral Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test-only or analyze"
+        required: true
+        default: "test-only"
+        type: choice
+        options:
+          - test-only
+          - analyze
+      product_slug:
+        description: "Product slug"
+        required: true
+        default: "spendesk"
+      limit:
+        description: "Number of reviews to send to Mistral"
+        required: true
+        default: "240"
+
+jobs:
+  mistral:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Test Mistral connection
+        if: ${{ inputs.mode == 'test-only' }}
+        run: python analyze_reviews_mistral.py --test-only --model "${MISTRAL_MODEL:-mistral-small-latest}"
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}
+
+      - name: Generate and save Mistral insights
+        if: ${{ inputs.mode == 'analyze' }}
+        run: python analyze_reviews_mistral.py --product-slug "${{ inputs.product_slug }}" --limit "${{ inputs.limit }}" --model "${MISTRAL_MODEL:-mistral-small-latest}"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}
+          MISTRAL_REVIEW_PROMPT: ${{ vars.MISTRAL_REVIEW_PROMPT }}
