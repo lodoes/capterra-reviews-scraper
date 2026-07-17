@@ -1,91 +1,83 @@
-# Capterra Reviews Scraper
+# Spendesk Capterra Analytics
 
-Scraper Python pour extraire les avis Capterra vers CSV et JSON.
+Projet realise pour le cas pratique Skello : scraper les reviews Spendesk sur Capterra sans actor pre-build, stocker les donnees dans une base, puis les afficher dans un front analytics public.
 
-Le script utilise SeleniumBase en mode UC/CDP pour charger les pages, contourner les challenges Cloudflare quand c'est possible, puis extrait un maximum d'informations par avis :
+## Ce que contient le projet
 
-- profil reviewer
-- role et industrie
-- duree d'utilisation
-- titre, date et resume
-- notes detaillees
+- `capterra_scraper.py` : scraper Python base sur SeleniumBase UC/CDP.
+- `supabase_schema.sql` : schema Supabase pour les reviews et les insights IA.
+- `frontend/` : dashboard React public.
+- `analyze_reviews_mistral.py` : enrichissement IA cote serveur/local.
+- `.github/workflows/` : workflows pour scraper, lancer l'analyse IA et deployer la Supabase Edge Function.
+
+## Demarche
+
+J'ai commence par tester Web Scraper et Instant Data Scraper pour comprendre la structure des pages Capterra. Je suis ensuite passe sur une implementation full Python pour respecter la consigne et controler toute la logique d'extraction.
+
+La difficulte principale a ete le contournement des protections Capterra : erreurs 403, puis Cloudflare. La version actuelle utilise SeleniumBase en mode UC/CDP, ce qui fonctionne en local et permet d'extraire les avis avec davantage de contexte.
+
+Les reviews sont ensuite stockees dans Supabase, puis consommees par un dashboard React. Une couche IA avec Mistral peut regrouper les keywords, nettoyer les termes peu utiles, deduire les pros/cons et produire une synthese plus lisible.
+
+## Donnees extraites
+
+Le scraper recupere notamment :
+
+- reviewer
+- date de review + date ISO exploitable
+- titre et summary
+- rating global
 - pros et cons
-- source de l'avis
-- reponse de l'editeur
+- role, industrie, taille d'entreprise quand disponible
+- reponse editeur quand disponible
+- source URL
+- payload complet dans une colonne JSONB
 
-## Installation
+Chaque avis est upsert dans Supabase avec un `fingerprint` unique pour eviter les doublons.
+
+## Lancer le scraper en local
+
+Installation :
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-## Usage
-
-```powershell
-python capterra_scraper.py
-```
-
-Avec headless + CDP Mode :
+Scrape simple :
 
 ```powershell
 python capterra_scraper.py --headless
 ```
 
-Limiter le nombre de pages :
-
-```powershell
-python capterra_scraper.py --max-pages 2
-```
-
-Changer l'URL :
-
-```powershell
-python capterra_scraper.py --url "https://www.capterra.com/p/157515/Spendesk/reviews/"
-```
-
-Les exports sont generes dans `resultats/`, qui est ignore par Git.
-
-## Supabase
-
-Le script peut envoyer automatiquement tous les avis dans Supabase apres le scrape.
-
-1. Dans Supabase, ouvre le SQL Editor et execute `supabase_schema.sql`.
-2. Dans GitHub, ajoute ces secrets au repo :
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-3. Lance le workflow GitHub Actions `Scrape Capterra Reviews`.
-
-En local, l'upload Supabase se declenche automatiquement si les variables sont presentes :
+Scrape + upload Supabase :
 
 ```powershell
 $env:SUPABASE_URL="https://xxxx.supabase.co"
 $env:SUPABASE_SERVICE_ROLE_KEY="..."
-python capterra_scraper.py --headless
-```
-
-Pour forcer une erreur si Supabase n'est pas configure :
-
-```powershell
 python capterra_scraper.py --headless --supabase
 ```
 
-La table par defaut est `capterra_reviews`. Chaque avis est upsert via un `fingerprint` unique, avec l'avis complet stocke dans la colonne JSONB `data`.
+Limiter les pages pour tester :
 
-## Front analytics public
-
-Le dossier `frontend/` contient un dashboard React public qui lit Supabase et charge toutes les reviews par pagination, pas seulement les dernieres.
-
-Variables d'environnement du front :
-
-```text
-VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=ta_cle_anon_publique
-VITE_SUPABASE_TABLE=capterra_reviews
+```powershell
+python capterra_scraper.py --headless --max-pages 2
 ```
 
-N'utilise jamais la service role key dans le front.
+Les exports CSV/JSON sont generes dans `resultats/`.
 
-Pour le lancer en local :
+## Supabase
+
+1. Executer `supabase_schema.sql` dans le SQL Editor Supabase.
+2. Configurer `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` cote serveur/local/GitHub Actions.
+3. Le front utilise uniquement la cle anon publique, jamais la service role key.
+
+Tables principales :
+
+- `capterra_reviews`
+- `capterra_review_insights`
+
+## Front analytics
+
+Le front se trouve dans `frontend/`.
 
 ```powershell
 cd frontend
@@ -93,137 +85,89 @@ npm install
 npm run dev
 ```
 
-Pour Render.com :
+Fonctionnalites principales :
 
-1. Cree un **Static Site**.
-2. Connecte ce repo GitHub.
-3. Utilise :
-   - Root Directory: `frontend`
-   - Build Command: `npm install && npm run build`
-   - Publish Directory: `dist`
-4. Ajoute les variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_SUPABASE_TABLE`.
+- overview
+- sentiment analysis
+- review feed avec recherche, tri et filtres
+- filtres date/rating/sentiment
+- notifications de nouveaux avis
+- settings oriente utilisateur
+- lecture des insights IA sauvegardes en base
 
-Le fichier `render.yaml` contient aussi une configuration Blueprint equivalente.
+Pour Render, utiliser un **Static Site** :
 
-## Insights IA avec Mistral
+- Root Directory: `frontend`
+- Build Command: `npm install && npm run build`
+- Publish Directory: `dist`
 
-Le front peut lire des insights IA depuis `capterra_review_insights`. Execute d'abord la partie SQL de `supabase_schema.sql`, puis lance l'analyse cote serveur/local, jamais dans le navigateur.
+Variables front minimales :
+
+```text
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=...
+```
+
+## IA Mistral
+
+L'IA n'est pas appelee directement depuis le navigateur. Elle sert a produire des insights plus propres que de simples comptages de mots :
+
+- keywords regroupes par themes
+- top pros coherents
+- top cons coherents
+- categorized performance
+- synthese globale
+
+Lancer l'analyse en local :
 
 ```powershell
 $env:SUPABASE_URL="https://xxxx.supabase.co"
 $env:SUPABASE_SERVICE_ROLE_KEY="..."
 $env:MISTRAL_API_KEY="..."
-$env:MISTRAL_MODEL="mistral-small-latest"
-$env:MISTRAL_REVIEW_PROMPT="Group reviews into coherent business themes with clean keywords."
 python analyze_reviews_mistral.py --product-slug spendesk
 ```
 
-Le script regroupe les avis par champs lexicaux coherents : pros, cons, keywords propres, et performance categorisee avec une ligne `Overall Experience`.
+Ou via GitHub Actions :
 
-Pour tester la cle Mistral sans l'ecrire dans une commande ni dans le repo :
-
-```powershell
-.\test_mistral_connection.ps1
+```text
+Actions > Run Mistral Analysis > mode: analyze
 ```
 
-Le script demande la cle en saisie masquee si `MISTRAL_API_KEY` n'est pas deja defini.
+La Supabase Edge Function `analyze-mistral` existe pour faire tourner cette analyse cote serveur de maniere plus propre, sans exposer la cle Mistral au front.
 
-Tu peux aussi utiliser GitHub Actions :
+## Workflows GitHub Actions
 
-1. Ajoute les secrets `MISTRAL_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
-2. Lance le workflow **Run Mistral Analysis**.
-3. Choisis `test-only` pour tester la cle, ou `analyze` pour generer et sauvegarder les insights dans Supabase.
+- `Scrape Capterra Reviews` : lance le scraper et upload Supabase.
+- `Run Mistral Analysis` : genere les insights IA et les sauvegarde.
+- `Deploy Supabase Edge Functions` : deploie la fonction `analyze-mistral`.
 
-Pour verifier toute la chaine en local :
+Secrets utiles :
 
-```powershell
-$env:SUPABASE_URL="https://xxxx.supabase.co"
-$env:SUPABASE_SERVICE_ROLE_KEY="..."
-$env:MISTRAL_API_KEY="..."
-python check_ai_setup.py
+```text
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+MISTRAL_API_KEY
 ```
 
-Ajoute `--write-test` pour verifier aussi l'ecriture dans `capterra_review_insights`.
+Pour deployer l'Edge Function, ajouter aussi :
 
-### Depuis l'interface Settings
-
-Le dashboard contient une page **Settings** avec :
-
-- `Test connection` pour verifier la cle et le modele Mistral sans analyser les reviews.
-- `Run Mistral analysis` pour generer les insights et les injecter dans le dashboard.
-- `AI diagnostics` pour verifier que Supabase, la table insights et la Edge Function sont atteignables.
-
-Le bouton essaie d'abord la Supabase Edge Function. Si elle n'est pas encore deployee et qu'une cle Mistral est saisie dans Settings, le front tente un fallback direct via l'API Mistral depuis le navigateur, puis sauvegarde les insights dans `capterra_review_insights`.
-
-Pour autoriser cette sauvegarde depuis l'interface, execute la derniere version de `supabase_schema.sql` dans Supabase SQL Editor. Elle ajoute les policies `insert/update` limitees au `product_slug = 'spendesk'`.
-
-Mode production recommande : deploie la Supabase Edge Function :
-
-```powershell
-supabase functions deploy analyze-mistral
+```text
+SUPABASE_ACCESS_TOKEN
+SUPABASE_PROJECT_REF
 ```
 
-Ou lance le workflow GitHub Actions **Deploy Supabase Edge Functions** apres avoir ajoute ces secrets au repo :
+## Limites connues
 
-- `SUPABASE_ACCESS_TOKEN`
-- `SUPABASE_PROJECT_REF`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `MISTRAL_API_KEY`
+Le scraper fonctionne bien en local. En revanche, les environnements cloud/headless comme GitHub Actions ou Cloud Run peuvent etre davantage detectes par Cloudflare, car ils utilisent des IP de datacenter et des navigateurs jetables.
 
-Puis configure au minimum les secrets Supabase qui permettent a la function de lire/ecrire les insights :
+Pour une V2 vraiment autonome, la meilleure piste serait un VPS prive avec Chrome/profil persistant, lance soit par cron, soit manuellement depuis le dashboard.
 
-```powershell
-supabase secrets set SUPABASE_URL="https://xxxx.supabase.co"
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY="..."
-```
+## Stack
 
-Deux options sont possibles pour Mistral :
-
-1. Test rapide : colle ta cle Mistral dans Settings. Elle reste dans le navigateur et est envoyee a la function au moment du clic.
-2. Mode plus propre : configure la cle cote Supabase et laisse le champ API key vide dans Settings.
-
-```powershell
-supabase secrets set MISTRAL_API_KEY="..."
-supabase secrets set MISTRAL_MODEL="mistral-small-latest"
-```
-
-Le front appelle `${VITE_SUPABASE_URL}/functions/v1/analyze-mistral`, la function lit les reviews, appelle Mistral, puis upsert le resultat dans `capterra_review_insights`.
-
-## Google Cloud Run Jobs
-
-Pour Google Cloud, utilise **Cloud Run Jobs**, pas un Cloud Run Service.
-
-Le scraper est une tache batch : il demarre, scrape, stocke dans Supabase, puis s'arrete. Un Cloud Run Service attendrait une app HTTP qui ecoute sur `$PORT`, ce qui n'est pas le cas ici.
-
-Le repo contient un `Dockerfile` qui installe Chromium pour SeleniumBase.
-
-Exemple de build :
-
-```bash
-gcloud builds submit --tag gcr.io/PROJECT_ID/capterra-reviews-scraper
-```
-
-Creation du job :
-
-```bash
-gcloud secrets create supabase-service-role-key --data-file=-
-
-gcloud run jobs create capterra-reviews-scraper \
-  --image gcr.io/PROJECT_ID/capterra-reviews-scraper \
-  --region europe-west1 \
-  --set-env-vars SUPABASE_URL=https://xxxx.supabase.co \
-  --set-secrets SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest
-```
-
-Execution :
-
-```bash
-gcloud run jobs execute capterra-reviews-scraper --region europe-west1
-```
-
-Pour tester seulement 2 pages, surcharge la commande du job avec :
-
-```bash
-python capterra_scraper.py --headless --supabase --max-pages 2 --out /tmp/resultats
-```
+- Python
+- SeleniumBase
+- BeautifulSoup
+- Supabase
+- React / Vite
+- Render pour le front
+- Mistral pour l'enrichissement IA
