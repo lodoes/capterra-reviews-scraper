@@ -1165,26 +1165,6 @@ function buildCategoryRows(reviews) {
                                         <p className="text-on-surface-variant font-body-md mt-1 opacity-80">Latest verified feedback from Capterra users.</p>
                                     </div>
                                     <div className="flex flex-wrap justify-end gap-3">
-                                        <label className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant/30 rounded-lg shadow-sm">
-                                            <span className="material-symbols-outlined text-[18px] text-on-surface-variant">sort</span>
-                                            <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} className="bg-transparent border-none text-label-md font-bold text-primary focus:ring-0 p-0">
-                                                <option value="newest">Newest first</option>
-                                                <option value="oldest">Oldest first</option>
-                                                <option value="rating-high">Highest rating</option>
-                                                <option value="rating-low">Lowest rating</option>
-                                            </select>
-                                        </label>
-                                        <label className="flex items-center gap-2 px-4 py-2.5 bg-surface-container-lowest border border-outline-variant/30 rounded-lg shadow-sm">
-                                            <span className="material-symbols-outlined text-[18px] text-secondary" style={{fontVariationSettings: "'FILL' 1"}}>star</span>
-                                            <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} className="bg-transparent border-none text-label-md font-bold text-primary focus:ring-0 p-0">
-                                                <option value="all">All ratings</option>
-                                                <option value="5">5 stars</option>
-                                                <option value="4">4 stars</option>
-                                                <option value="3">3 stars</option>
-                                                <option value="2">2 stars</option>
-                                                <option value="1">1 star</option>
-                                            </select>
-                                        </label>
                                         <button onClick={() => exportCsv(reviews)} className="flex items-center gap-2 px-6 py-2.5 bg-surface-container-lowest border border-outline-variant/30 text-label-md font-bold rounded-lg hover:bg-surface-container hover:border-secondary/30 hover:text-secondary transition-all shadow-sm">
                                             <span className="material-symbols-outlined text-[18px]">download</span>
                                             Export CSV
@@ -1252,24 +1232,55 @@ function buildCategoryRows(reviews) {
                             </div>
                             <div className="space-y-10">
                                 <div className="space-y-4">
+                                    <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Sort Reviews</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {[
+                                            { value: "newest", label: "Newest", icon: "south" },
+                                            { value: "oldest", label: "Oldest", icon: "north" },
+                                            { value: "rating-high", label: "Top rated", icon: "star" },
+                                            { value: "rating-low", label: "Lowest", icon: "star_half" },
+                                        ].map((item) => (
+                                            <button
+                                                key={item.value}
+                                                type="button"
+                                                onClick={() => setSortMode(item.value)}
+                                                className={`flex flex-col items-start gap-2 rounded-xl border px-4 py-3 text-left transition-all ${sortMode === item.value ? "bg-secondary/10 border-secondary/30 text-secondary shadow-sm" : "bg-surface-container-low border-transparent text-on-surface-variant hover:bg-surface-container"}`}
+                                            >
+                                                <span className="material-symbols-outlined text-[20px]" style={{fontVariationSettings: sortMode === item.value ? "'FILL' 1" : ""}}>{item.icon}</span>
+                                                <span className="text-label-md font-bold">{item.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="space-y-4">
                                     <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Filter by Rating</label>
-                                    <div className="space-y-3">
-                                        <div className="flex items-center justify-between group cursor-pointer hover:bg-surface-container-low p-2 rounded-lg transition-all">
-                                            <div className="flex items-center gap-3">
-                                                <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)} className="bg-surface-container-low border-none rounded-lg text-label-md px-3 py-2 focus:ring-secondary/20">
-                                                    <option value="all">All ratings</option>
-                                                    <option value="5">5 stars</option>
-                                                    <option value="4">4 stars</option>
-                                                    <option value="3">3 stars</option>
-                                                    <option value="2">2 stars</option>
-                                                    <option value="1">1 star</option>
-                                                </select>
-                                                <div className="flex items-center text-secondary text-sm">
-                                                    {[1,2,3,4,5].map(s => <span key={s} className="material-symbols-outlined text-sm" style={{fontVariationSettings: "'FILL' 1"}}>star</span>)}
-                                                </div>
-                                            </div>
-                                            <span className="text-label-md text-on-surface-variant font-bold">{analytics.filteredLabel}</span>
-                                        </div>
+                                    <div className="space-y-2">
+                                        {[
+                                            { value: "all", label: "All ratings" },
+                                            { value: "5", label: "5 stars" },
+                                            { value: "4", label: "4 stars" },
+                                            { value: "3", label: "3 stars" },
+                                            { value: "2", label: "2 stars" },
+                                            { value: "1", label: "1 star" },
+                                        ].map((item) => {
+                                            const count = item.value === "all"
+                                                ? filteredReviews.length
+                                                : filteredReviews.filter((review) => Math.round(asNumber(review.rating) || 0) === Number(item.value)).length;
+                                            return (
+                                                <button
+                                                    key={item.value}
+                                                    type="button"
+                                                    onClick={() => setRatingFilter(item.value)}
+                                                    className={`w-full flex items-center justify-between rounded-xl border px-4 py-3 transition-all ${ratingFilter === item.value ? "bg-secondary/10 border-secondary/30 text-secondary shadow-sm" : "bg-surface-container-low border-transparent text-on-surface-variant hover:bg-surface-container"}`}
+                                                >
+                                                    <span className="flex items-center gap-3">
+                                                        <span className="material-symbols-outlined text-[18px]" style={{fontVariationSettings: item.value !== "all" ? "'FILL' 1" : ""}}>{item.value === "all" ? "filter_list" : "star"}</span>
+                                                        <span className="text-label-md font-bold">{item.label}</span>
+                                                    </span>
+                                                    <span className="text-[11px] font-extrabold bg-surface-container-lowest/80 px-2 py-1 rounded-full">{count}</span>
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                                 <div className="space-y-4">
