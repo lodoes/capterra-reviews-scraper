@@ -130,6 +130,13 @@ Pour que ce bouton fonctionne, deploie la Supabase Edge Function :
 supabase functions deploy analyze-mistral
 ```
 
+Ou lance le workflow GitHub Actions **Deploy Supabase Edge Functions** apres avoir ajoute ces secrets au repo :
+
+- `SUPABASE_ACCESS_TOKEN`
+- `SUPABASE_PROJECT_REF`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `MISTRAL_API_KEY`
+
 Puis configure au minimum le secret Supabase qui permet a la function d'ecrire les insights :
 
 ```powershell
