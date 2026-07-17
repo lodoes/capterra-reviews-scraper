@@ -120,6 +120,14 @@ python analyze_reviews_mistral.py --product-slug spendesk
 
 Le script regroupe les avis par champs lexicaux coherents : pros, cons, keywords propres, et performance categorisee avec une ligne `Overall Experience`.
 
+Pour tester la cle Mistral sans l'ecrire dans une commande ni dans le repo :
+
+```powershell
+.\test_mistral_connection.ps1
+```
+
+Le script demande la cle en saisie masquee si `MISTRAL_API_KEY` n'est pas deja defini.
+
 ### Depuis l'interface Settings
 
 Le dashboard contient une page **Settings** avec :
