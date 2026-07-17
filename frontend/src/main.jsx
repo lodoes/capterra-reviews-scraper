@@ -113,7 +113,7 @@ function writeMistralSettings(settings) {
 
 async function runMistralAnalysis(settings) {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Supabase is not configured in the frontend environment.");
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
+    const edgeResponse = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
         method: "POST",
         headers: {
             apikey: SUPABASE_ANON_KEY,
@@ -128,9 +128,99 @@ async function runMistralAnalysis(settings) {
             mistralApiKey: settings.apiKey || undefined,
         }),
     });
+    const edgePayload = await edgeResponse.json().catch(() => ({}));
+    if (edgeResponse.ok && edgePayload.ok !== false) return { ...edgePayload, source: "supabase-edge" };
+    if (!settings.apiKey) throw new Error(edgePayload.error || `Mistral analysis failed (${edgeResponse.status})`);
+
+    const reviews = await fetchAllReviews();
+    const sampledReviews = reviews.slice(0, 240);
+    const insights = await runMistralInBrowser(settings, sampledReviews);
+    const persisted = await saveBrowserInsights(settings, insights).catch(() => false);
+    return {
+        ok: true,
+        source: persisted ? "browser-mistral-supabase" : "browser-mistral-local",
+        productSlug: "spendesk",
+        model: settings.model || DEFAULT_MISTRAL_SETTINGS.model,
+        analyzed: sampledReviews.length,
+        insights,
+        persisted,
+        edgeError: edgePayload.error || `Edge Function unavailable (${edgeResponse.status})`,
+    };
+}
+
+function compactReviewForAi(review) {
+    const data = review.data || {};
+    return {
+        date: review.review_date_iso || review.review_date,
+        rating: review.rating,
+        title: review.title,
+        summary: data.summary,
+        pros: data.pros,
+        cons: data.cons,
+        role: data.reviewer_role,
+        industry: data.reviewer_industry,
+    };
+}
+
+function buildMistralMessages(settings, reviews) {
+    const outputSchema = {
+        keywords: [{ theme: "Clear semantic keyword, no typo", count: 12 }],
+        top_pros: [{ title: "Theme name", description: "Concrete takeaway from reviews", count: 12, example: "Short paraphrased example" }],
+        top_cons: [{ title: "Theme name", description: "Concrete takeaway from reviews", count: 8, example: "Short paraphrased example" }],
+        categories: [{ category: "Overall Experience", score: 4.4, trend: "High", takeaway: "Strategic synthesis" }],
+    };
+    return [
+        {
+            role: "system",
+            content: "You analyze SaaS product reviews. Return only valid JSON. Group related wording into coherent semantic themes. Do not output malformed tokens, misspellings, stop words, brand-only words, or generic words. Scores must be numeric between 0 and 5.",
+        },
+        {
+            role: "user",
+            content: JSON.stringify({
+                task: "Create coherent analytics insights for Capterra reviews of spendesk.",
+                analysis_instructions: settings.prompt || DEFAULT_MISTRAL_SETTINGS.prompt,
+                output_schema: outputSchema,
+                required_categories: ["Overall Experience", "Features", "Pricing", "Ease of Use"],
+                reviews: reviews.map(compactReviewForAi),
+            }),
+        },
+    ];
+}
+
+async function runMistralInBrowser(settings, reviews) {
+    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${settings.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+            model: settings.model || DEFAULT_MISTRAL_SETTINGS.model,
+            messages: buildMistralMessages(settings, reviews),
+            temperature: 0.2,
+            response_format: { type: "json_object" },
+        }),
+    });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload.ok === false) throw new Error(payload.error || `Mistral analysis failed (${response.status})`);
-    return payload;
+    if (!response.ok) throw new Error(payload.message || payload.error?.message || `Mistral browser call failed (${response.status})`);
+    return JSON.parse(payload.choices?.[0]?.message?.content || "{}");
+}
+
+async function saveBrowserInsights(settings, insights) {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${INSIGHTS_TABLE}?on_conflict=product_slug`, {
+        method: "POST",
+        headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify([{
+            product_slug: "spendesk",
+            model: settings.model || DEFAULT_MISTRAL_SETTINGS.model,
+            generated_at: new Date().toISOString(),
+            insights,
+        }]),
+    });
+    return response.ok;
 }
 
 function isFilterableReview(review) {
@@ -1238,7 +1328,9 @@ function buildCategoryRows(reviews) {
                 setRunResult("");
                 try {
                     const payload = await runAiAnalysis(settings);
-                    setRunResult(`${payload.analyzed} reviews analyzed with ${payload.model}. Insights saved to Supabase.`);
+                    const sourceLabel = payload.source === "supabase-edge" ? "Supabase Edge Function" : "browser fallback";
+                    const persistenceLabel = payload.persisted === false ? "Displayed locally; Supabase persistence was not allowed." : "Insights saved to Supabase.";
+                    setRunResult(`${payload.analyzed} reviews analyzed with ${payload.model} via ${sourceLabel}. ${persistenceLabel}`);
                 } catch (err) {
                     setRunResult("");
                 }

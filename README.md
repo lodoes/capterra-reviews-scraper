@@ -124,7 +124,11 @@ Le script regroupe les avis par champs lexicaux coherents : pros, cons, keywords
 
 Le dashboard contient une page **Settings** avec un bouton `Run Mistral analysis`.
 
-Pour que ce bouton fonctionne, deploie la Supabase Edge Function :
+Le bouton essaie d'abord la Supabase Edge Function. Si elle n'est pas encore deployee et qu'une cle Mistral est saisie dans Settings, le front tente un fallback direct via l'API Mistral depuis le navigateur, puis sauvegarde les insights dans `capterra_review_insights`.
+
+Pour autoriser cette sauvegarde depuis l'interface, execute la derniere version de `supabase_schema.sql` dans Supabase SQL Editor. Elle ajoute les policies `insert/update` limitees au `product_slug = 'spendesk'`.
+
+Mode production recommande : deploie la Supabase Edge Function :
 
 ```powershell
 supabase functions deploy analyze-mistral

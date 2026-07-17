@@ -67,6 +67,8 @@ create table if not exists public.capterra_review_insights (
 alter table public.capterra_review_insights enable row level security;
 
 drop policy if exists "Public read capterra review insights" on public.capterra_review_insights;
+drop policy if exists "Public upsert capterra review insights" on public.capterra_review_insights;
+drop policy if exists "Public update capterra review insights" on public.capterra_review_insights;
 
 create policy "Public read capterra review insights"
 on public.capterra_review_insights
@@ -74,4 +76,18 @@ for select
 to anon
 using (true);
 
+create policy "Public upsert capterra review insights"
+on public.capterra_review_insights
+for insert
+to anon
+with check (product_slug = 'spendesk');
+
+create policy "Public update capterra review insights"
+on public.capterra_review_insights
+for update
+to anon
+using (product_slug = 'spendesk')
+with check (product_slug = 'spendesk');
+
 grant select on public.capterra_review_insights to anon;
+grant insert, update on public.capterra_review_insights to anon;
