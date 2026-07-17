@@ -684,6 +684,12 @@ def _supabase_config(args):
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
     table = args.supabase_table or os.getenv("SUPABASE_TABLE") or "capterra_reviews"
+    if url and ("xxxx.supabase.co" in url or "YOUR_PROJECT" in url):
+        raise RuntimeError(
+            "SUPABASE_URL contient encore une valeur exemple. "
+            "Remplace-la par ton URL projet, par exemple "
+            "https://qlwvivkezencymtqodbb.supabase.co"
+        )
     return url, key, table
 
 
