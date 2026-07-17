@@ -111,30 +111,50 @@ function writeMistralSettings(settings) {
     window.localStorage.setItem(MISTRAL_SETTINGS_KEY, JSON.stringify(settings));
 }
 
+function friendlyFetchError(error, context) {
+    const message = error?.message || String(error);
+    if (/failed to fetch|networkerror|load failed/i.test(message)) {
+        return `${context}: network/CORS failure. Deploy the Supabase Edge Function analyze-mistral, check VITE_SUPABASE_URL, or run the GitHub Action "Run Mistral Analysis".`;
+    }
+    return `${context}: ${message}`;
+}
+
 async function runMistralAnalysis(settings) {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Supabase is not configured in the frontend environment.");
-    const edgeResponse = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
-        method: "POST",
-        headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            productSlug: "spendesk",
-            limit: 240,
-            model: settings.model || DEFAULT_MISTRAL_SETTINGS.model,
-            prompt: settings.prompt || DEFAULT_MISTRAL_SETTINGS.prompt,
-            mistralApiKey: settings.apiKey || undefined,
-        }),
-    });
-    const edgePayload = await edgeResponse.json().catch(() => ({}));
-    if (edgeResponse.ok && edgePayload.ok !== false) return { ...edgePayload, source: "supabase-edge" };
-    if (!settings.apiKey) throw new Error(edgePayload.error || `Mistral analysis failed (${edgeResponse.status})`);
+    let edgePayload = {};
+    let edgeError = "";
+    try {
+        const edgeResponse = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
+            method: "POST",
+            headers: {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                productSlug: "spendesk",
+                limit: 240,
+                model: settings.model || DEFAULT_MISTRAL_SETTINGS.model,
+                prompt: settings.prompt || DEFAULT_MISTRAL_SETTINGS.prompt,
+                mistralApiKey: settings.apiKey || undefined,
+            }),
+        });
+        edgePayload = await edgeResponse.json().catch(() => ({}));
+        if (edgeResponse.ok && edgePayload.ok !== false) return { ...edgePayload, source: "supabase-edge" };
+        edgeError = edgePayload.error || `Edge Function returned ${edgeResponse.status}`;
+    } catch (err) {
+        edgeError = friendlyFetchError(err, "Edge Function analyze-mistral");
+    }
+    if (!settings.apiKey) throw new Error(`${edgeError}. Add a Mistral API key in Settings or configure MISTRAL_API_KEY as a Supabase secret.`);
 
     const reviews = await fetchAllReviews();
     const sampledReviews = reviews.slice(0, 240);
-    const insights = await runMistralInBrowser(settings, sampledReviews);
+    let insights;
+    try {
+        insights = await runMistralInBrowser(settings, sampledReviews);
+    } catch (err) {
+        throw new Error(`${edgeError}. Browser fallback failed too: ${friendlyFetchError(err, "Mistral browser call")}`);
+    }
     const persisted = await saveBrowserInsights(settings, insights).catch(() => false);
     return {
         ok: true,
@@ -144,7 +164,7 @@ async function runMistralAnalysis(settings) {
         analyzed: sampledReviews.length,
         insights,
         persisted,
-        edgeError: edgePayload.error || `Edge Function unavailable (${edgeResponse.status})`,
+        edgeError,
     };
 }
 
@@ -225,36 +245,48 @@ async function saveBrowserInsights(settings, insights) {
 
 async function testMistralConnection(settings) {
     const model = settings.model || DEFAULT_MISTRAL_SETTINGS.model;
+    let edgeError = "";
     if (SUPABASE_URL && SUPABASE_ANON_KEY) {
-        const edgeResponse = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
-            method: "POST",
-            headers: {
-                apikey: SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ action: "test", model, mistralApiKey: settings.apiKey || undefined }),
-        });
-        const edgePayload = await edgeResponse.json().catch(() => ({}));
-        if (edgeResponse.ok && edgePayload.ok !== false) return { ok: true, source: "Supabase Edge Function", model };
-        if (!settings.apiKey) throw new Error(edgePayload.error || `Connection test failed (${edgeResponse.status})`);
+        try {
+            const edgeResponse = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
+                method: "POST",
+                headers: {
+                    apikey: SUPABASE_ANON_KEY,
+                    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ action: "test", model, mistralApiKey: settings.apiKey || undefined }),
+            });
+            const edgePayload = await edgeResponse.json().catch(() => ({}));
+            if (edgeResponse.ok && edgePayload.ok !== false) return { ok: true, source: "Supabase Edge Function", model };
+            edgeError = edgePayload.error || `Edge Function returned ${edgeResponse.status}`;
+            if (!settings.apiKey) throw new Error(edgeError);
+        } catch (err) {
+            edgeError = friendlyFetchError(err, "Edge Function test");
+            if (!settings.apiKey) throw new Error(edgeError);
+        }
     }
     if (!settings.apiKey) throw new Error("Add a Mistral API key or configure MISTRAL_API_KEY in the Supabase Edge Function.");
-    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${settings.apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-            model,
-            messages: [
-                { role: "system", content: "Return only valid JSON." },
-                { role: "user", content: '{"ok": true, "message": "Mistral connection test"}' },
-            ],
-            temperature: 0,
-            response_format: { type: "json_object" },
-        }),
-    });
+    let response;
+    try {
+        response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${settings.apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: "system", content: "Return only valid JSON." },
+                    { role: "user", content: '{"ok": true, "message": "Mistral connection test"}' },
+                ],
+                temperature: 0,
+                response_format: { type: "json_object" },
+            }),
+        });
+    } catch (err) {
+        throw new Error(`${edgeError ? edgeError + ". " : ""}${friendlyFetchError(err, "Mistral browser test")}`);
+    }
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.message || payload.error?.message || `Mistral test failed (${response.status})`);
+    if (!response.ok) throw new Error(`${edgeError ? edgeError + ". " : ""}${payload.message || payload.error?.message || `Mistral test failed (${response.status})`}`);
     return { ok: true, source: "browser fallback", model };
 }
 
@@ -291,7 +323,7 @@ async function runAiDiagnostics() {
         });
         add("Edge Function", response.ok, response.ok ? "Reachable" : `${response.status}: deploy analyze-mistral or use browser fallback`);
     } catch (err) {
-        add("Edge Function", false, err.message || String(err));
+        add("Edge Function", false, friendlyFetchError(err, "analyze-mistral"));
     }
     return checks;
 }
