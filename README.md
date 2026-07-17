@@ -134,6 +134,17 @@ Tu peux aussi utiliser GitHub Actions :
 2. Lance le workflow **Run Mistral Analysis**.
 3. Choisis `test-only` pour tester la cle, ou `analyze` pour generer et sauvegarder les insights dans Supabase.
 
+Pour verifier toute la chaine en local :
+
+```powershell
+$env:SUPABASE_URL="https://xxxx.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="..."
+$env:MISTRAL_API_KEY="..."
+python check_ai_setup.py
+```
+
+Ajoute `--write-test` pour verifier aussi l'ecriture dans `capterra_review_insights`.
+
 ### Depuis l'interface Settings
 
 Le dashboard contient une page **Settings** avec :
