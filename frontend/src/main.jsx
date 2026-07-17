@@ -188,7 +188,7 @@ function InsightsProvider({ children }) {
             minDate,
             maxDate,
             keywords,
-            monthly: getMonthly(reviews),
+            monthly: getMonthly(filteredReviews),
             topPros: buildHighlights(filteredReviews, "pros", fallbackPros),
             topCons: buildHighlights(filteredReviews, "cons", fallbackCons),
             categoryRows: buildCategoryRows(filteredReviews),
@@ -345,7 +345,7 @@ function buildCategoryRows(reviews) {
         const TopBar = ({ title = "Search insights..." }) => {
             const { query, setQuery } = useInsights();
             return (
-                <header className="w-full h-20 fixed top-0 z-40 bg-surface/80 backdrop-blur-md flex justify-between items-center px-lg ml-64 max-w-[calc(100%-16rem)]">
+                <header className="fixed top-0 right-0 left-64 h-20 z-40 bg-surface/80 backdrop-blur-md flex justify-between items-center px-lg">
                     <div className="flex items-center flex-1 max-w-xl">
                         <div className="relative w-full">
                             <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
@@ -357,14 +357,10 @@ function buildCategoryRows(reviews) {
                             <span className="material-symbols-outlined">notifications</span>
                             <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full border-2 border-surface"></span>
                         </button>
-                        <button className="w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low hover:text-primary transition-all">
-                            <span className="material-symbols-outlined">apps</span>
-                        </button>
-                        <div className="h-8 w-[1px] bg-outline-variant"></div>
                         <div className="flex items-center gap-3 bg-surface-container-low hover:bg-surface-container-high p-1.5 pr-4 rounded-full transition-all cursor-pointer group">
-                            <img className="w-10 h-10 rounded-full border-2 border-surface-container-high object-cover shadow-sm" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBSBEWXrKutEelc0KR3VM4wfCi2PzljlMSk6amtIej72mwbV1WIJ3J9iNzwZVPCgIaoYb01CY1lOFH7vjLe7DWdRdJDEWViT-f_H2fLIsK6IM5eV8psWL6MMYBl_l7iNjnFSTn9RN_DTLpWZYPtP0QBMtgg-XDBXtVjzO19AY0rmWm-PDPeVQPJZ5JfKxJ6BaO99r-z5-dv-s3mKXrXS54vXvxqNI0jQi9WfnKrtnzbfrkbezV6gT5Yew"/>
+                            <img className="w-10 h-10 rounded-full border-2 border-surface-container-high object-cover shadow-sm" src="/lotfi-profile.jpg"/>
                             <div className="hidden lg:block text-left ml-2">
-                                <p className="text-label-md font-bold text-primary leading-tight group-hover:text-secondary transition-colors">Alex Rivera</p>
+                                <p className="text-label-md font-bold text-primary leading-tight group-hover:text-secondary transition-colors">Lotfi Boulefaa</p>
                                 <p className="text-[10px] text-on-surface-variant font-label-sm uppercase tracking-widest">Admin</p>
                             </div>
                         </div>
@@ -394,16 +390,17 @@ function buildCategoryRows(reviews) {
                                     <p className="text-on-surface-variant text-body-lg">Real-time synthesis of user feedback and sentiment signals.</p>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                    <div className="flex items-center gap-2 px-4 py-3 border border-outline-variant text-on-surface font-label-md rounded-full hover:bg-surface-container-low transition-all">
-                                        <span className="material-symbols-outlined text-[20px]">calendar_today</span>
-                                        <input className="bg-transparent w-32 outline-none" type="date" value={dateFrom} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateFrom(event.target.value)} />
-                                        <span className="text-on-surface-variant">to</span>
-                                        <input className="bg-transparent w-32 outline-none" type="date" value={dateTo} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateTo(event.target.value)} />
-                                    </div>
-                                    <button className="flex items-center gap-2 px-6 py-3 bg-secondary text-white font-label-md rounded-full shadow-lg shadow-secondary/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
-                                        <span className="material-symbols-outlined text-[20px]">download</span>
-                                        Export PDF
-                                    </button>
+                                    <details className="relative">
+                                        <summary className="list-none flex items-center gap-2 px-6 py-3 border border-outline-variant text-on-surface font-label-md rounded-full hover:bg-surface-container-low transition-all cursor-pointer">
+                                            <span className="material-symbols-outlined text-[20px]">calendar_today</span>
+                                            {dateFrom || dateTo ? `${dateFrom || dateInputValue(minDate)} - ${dateTo || dateInputValue(maxDate)}` : "Last 30 Days"}
+                                        </summary>
+                                        <div className="absolute right-0 mt-3 w-72 rounded-2xl bg-surface-container-lowest border border-outline-variant/40 p-4 shadow-xl z-50 space-y-3">
+                                            <input className="w-full bg-surface-container-low border-none rounded-lg px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20" type="date" value={dateFrom} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateFrom(event.target.value)} />
+                                            <input className="w-full bg-surface-container-low border-none rounded-lg px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20" type="date" value={dateTo} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateTo(event.target.value)} />
+                                            <button type="button" onClick={() => { setDateFrom(""); setDateTo(""); }} className="w-full text-label-md font-bold text-secondary py-2">Reset dates</button>
+                                        </div>
+                                    </details>
                                 </div>
                             </div>
 
@@ -419,10 +416,6 @@ function buildCategoryRows(reviews) {
                                         <span className="text-display text-primary">{analytics.scopedAverage}</span>
                                         <span className="text-on-surface-variant text-body-md">/ 5</span>
                                     </div>
-                                    <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
-                                        <span className="material-symbols-outlined text-[16px] mr-1">trending_up</span>
-                                        +0.2 vs last month
-                                    </div>
                                 </div>
                                 <div className="bg-surface-container-lowest p-8 rounded-lg data-card-shadow">
                                     <div className="flex items-center justify-between mb-4">
@@ -432,10 +425,6 @@ function buildCategoryRows(reviews) {
                                         </div>
                                     </div>
                                     <div className="text-display text-primary">{analytics.filteredLabel}</div>
-                                    <div className="mt-4 flex items-center text-on-tertiary-container font-bold text-label-sm">
-                                        <span className="material-symbols-outlined text-[16px] mr-1">trending_up</span>
-                                        +12% Monthly Growth
-                                    </div>
                                 </div>
                                 <div className="bg-surface-container-lowest p-8 rounded-lg data-card-shadow">
                                     <div className="flex items-center justify-between mb-4">
@@ -762,7 +751,7 @@ function buildCategoryRows(reviews) {
             return (
                 <div className="animate-fade-in">
                     <TopBar title="Search sentiment analytics..." />
-                    <main className="ml-72 mt-20 p-container-padding">
+                    <main className="ml-64 pt-28 pb-16 px-lg">
                         <div className="max-w-[1440px] mx-auto space-y-10">
                             <div className="flex justify-between items-end">
                                 <div>
