@@ -56,3 +56,22 @@ using (true);
 
 grant usage on schema public to anon;
 grant select on public.capterra_reviews to anon;
+
+create table if not exists public.capterra_review_insights (
+  product_slug text primary key,
+  model text,
+  generated_at timestamptz not null default now(),
+  insights jsonb not null
+);
+
+alter table public.capterra_review_insights enable row level security;
+
+drop policy if exists "Public read capterra review insights" on public.capterra_review_insights;
+
+create policy "Public read capterra review insights"
+on public.capterra_review_insights
+for select
+to anon
+using (true);
+
+grant select on public.capterra_review_insights to anon;

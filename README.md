@@ -105,6 +105,19 @@ Pour Render.com :
 
 Le fichier `render.yaml` contient aussi une configuration Blueprint equivalente.
 
+## Insights IA avec Mistral
+
+Le front peut lire des insights IA depuis `capterra_review_insights`. Execute d'abord la partie SQL de `supabase_schema.sql`, puis lance l'analyse cote serveur/local, jamais dans le navigateur.
+
+```powershell
+$env:SUPABASE_URL="https://xxxx.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="..."
+$env:MISTRAL_API_KEY="..."
+python analyze_reviews_mistral.py --product-slug spendesk
+```
+
+Le script regroupe les avis par champs lexicaux coherents : pros, cons, keywords propres, et performance categorisee avec une ligne `Overall Experience`.
+
 ## Google Cloud Run Jobs
 
 Pour Google Cloud, utilise **Cloud Run Jobs**, pas un Cloud Run Service.

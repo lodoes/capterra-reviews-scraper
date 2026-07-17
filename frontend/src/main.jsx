@@ -5,6 +5,7 @@ import "./styles.css";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const TABLE = import.meta.env.VITE_SUPABASE_TABLE || "capterra_reviews";
+const INSIGHTS_TABLE = import.meta.env.VITE_SUPABASE_INSIGHTS_TABLE || "capterra_review_insights";
 const PAGE_SIZE = 1000;
 const InsightsContext = createContext(null);
 
@@ -68,19 +69,162 @@ async function fetchAllReviews() {
     return rows;
 }
 
+async function fetchAiInsights() {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+    const url = new URL(`${SUPABASE_URL}/rest/v1/${INSIGHTS_TABLE}`);
+    url.searchParams.set("select", "insights,generated_at,model");
+    url.searchParams.set("product_slug", "eq.spendesk");
+    url.searchParams.set("limit", "1");
+    const response = await fetch(url, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    });
+    if (!response.ok) return null;
+    const rows = await response.json();
+    return rows[0]?.insights || null;
+}
+
+const SEMANTIC_THEMES = [
+    {
+        id: "ease_of_use",
+        label: "Ease of use",
+        icon: "speed",
+        type: "pro",
+        category: "Ease of Use",
+        terms: ["easy", "ease", "simple", "simplicite", "simplicity", "intuitive", "facile", "rapide", "quick", "fast", "ux", "user friendly", "ergonomic"],
+        fallback: "Users repeatedly describe the product as simple, fast, and easy to adopt.",
+    },
+    {
+        id: "virtual_cards",
+        label: "Virtual cards",
+        icon: "credit_card",
+        type: "pro",
+        category: "Features",
+        terms: ["card", "cards", "virtual", "carte", "cartes", "payment card", "corporate card", "temporary card", "debit card"],
+        fallback: "Virtual cards and spending controls are a strong recurring positive.",
+    },
+    {
+        id: "expense_workflow",
+        label: "Expense workflows",
+        icon: "account_balance_wallet",
+        type: "pro",
+        category: "Features",
+        terms: ["expense", "expenses", "spend", "spending", "approval", "approvals", "workflow", "note de frais", "notes de frais", "reimbursement", "budget"],
+        fallback: "Finance workflows, approvals, and expense tracking are frequently praised.",
+    },
+    {
+        id: "accounting_sync",
+        label: "Accounting sync",
+        icon: "integration_instructions",
+        type: "pro",
+        category: "Features",
+        terms: ["accounting", "xero", "netsuite", "quickbooks", "sage", "sync", "integration", "integrations", "erp", "export", "bookkeeping", "compta"],
+        fallback: "Accounting integrations and exports reduce manual finance work.",
+    },
+    {
+        id: "visibility_reporting",
+        label: "Visibility & reporting",
+        icon: "query_stats",
+        type: "pro",
+        category: "Overall Experience",
+        terms: ["visibility", "report", "reporting", "dashboard", "tracking", "overview", "monitor", "control", "analytics", "real time", "realtime"],
+        fallback: "Teams value the visibility they gain over company spend.",
+    },
+    {
+        id: "mobile_app",
+        label: "Mobile app",
+        icon: "smartphone",
+        type: "pro",
+        category: "Ease of Use",
+        terms: ["mobile", "app", "application", "phone", "receipt", "scan", "ocr", "photo"],
+        fallback: "The mobile app is often tied to faster receipt and expense capture.",
+    },
+    {
+        id: "pricing",
+        label: "Pricing concerns",
+        icon: "euro",
+        type: "con",
+        category: "Pricing",
+        terms: ["price", "pricing", "cost", "expensive", "fees", "fee", "subscription", "plan", "tarif", "prix", "cher", "expensif"],
+        fallback: "The most coherent drawback is price sensitivity, especially for smaller teams.",
+    },
+    {
+        id: "ocr_receipts",
+        label: "Receipt capture issues",
+        icon: "receipt_long",
+        type: "con",
+        category: "Features",
+        terms: ["receipt", "receipts", "ocr", "scan", "scanning", "photo", "invoice", "facture", "justificatif", "capture"],
+        fallback: "Some users mention friction around receipts, OCR, or invoice capture.",
+    },
+    {
+        id: "workflow_limits",
+        label: "Workflow rigidity",
+        icon: "account_tree",
+        type: "con",
+        category: "Features",
+        terms: ["limit", "limits", "limited", "rigid", "custom", "customize", "customization", "flexibility", "approval", "workflow", "rule", "rules"],
+        fallback: "A recurring negative theme is limited customization in workflows or approval rules.",
+    },
+    {
+        id: "support_response",
+        label: "Support response",
+        icon: "support_agent",
+        type: "con",
+        category: "Overall Experience",
+        terms: ["support", "customer service", "response", "slow", "ticket", "help", "assistance", "bug", "issue", "problem"],
+        fallback: "When sentiment drops, support response time and issue resolution often appear.",
+    },
+    {
+        id: "sync_reliability",
+        label: "Sync reliability",
+        icon: "sync_problem",
+        type: "con",
+        category: "Features",
+        terms: ["sync", "synchronization", "integration", "bug", "error", "missing", "delay", "crash", "reliable", "reliability"],
+        fallback: "A smaller but meaningful theme concerns sync reliability and integration gaps.",
+    },
+];
+
+function normalizeText(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[’`]/g, "'")
+        .toLowerCase();
+}
+
+function reviewSemanticText(review, field) {
+    const data = review.data || {};
+    const pieces = field
+        ? [data[field]]
+        : [review.title, data.summary, data.pros, data.cons, data.reviewer_role, data.reviewer_industry];
+    return normalizeText(pieces.filter(Boolean).join(" "));
+}
+
+function scoreThemes(reviews, options = {}) {
+    const { field = null, type = null } = options;
+    return SEMANTIC_THEMES
+        .filter((theme) => !type || theme.type === type)
+        .map((theme) => {
+            const matchedReviews = [];
+            for (const review of reviews) {
+                const text = reviewSemanticText(review, field);
+                if (!text) continue;
+                const matched = theme.terms.some((term) => text.includes(normalizeText(term)));
+                if (matched) matchedReviews.push(review);
+            }
+            const sample = matchedReviews.find((review) => {
+                const data = review.data || {};
+                return data[field] || data.summary || review.title;
+            });
+            return { ...theme, count: matchedReviews.length, sample };
+        })
+        .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
 function getKeywords(reviews) {
-    const stop = new Set("the and for with that this from are you your our can was very have has but not all more use using easy great good spendesk les des une pour dans avec est pas sur nous vous tres très outil avis simple utilisation".split(" "));
-    const counts = new Map();
-    for (const review of reviews) {
-        const data = review.data || {};
-        const text = `${data.summary || ""} ${data.pros || ""} ${data.cons || ""}`.toLowerCase();
-        for (const raw of text.match(/[a-zÀ-ÿ][a-zÀ-ÿ'-]{3,}/g) || []) {
-            const word = raw.replace(/^['-]+|['-]+$/g, "");
-            if (stop.has(word)) continue;
-            counts.set(word, (counts.get(word) || 0) + 1);
-        }
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([word, count]) => ({ word, count }));
+    const themes = scoreThemes(reviews).filter((theme) => theme.count > 0).slice(0, 12);
+    return themes.map((theme) => ({ word: theme.label, count: theme.count }));
 }
 
 function getMonthly(reviews) {
@@ -110,8 +254,43 @@ function exportCsv(reviews) {
     URL.revokeObjectURL(url);
 }
 
+function aiItems(items, fallbackIcons) {
+    if (!Array.isArray(items) || !items.length) return [];
+    return items.slice(0, 3).map((item, idx) => ({
+        icon: item.icon || fallbackIcons[idx % fallbackIcons.length],
+        title: item.title || item.label || item.theme || "Insight",
+        desc: compactText(item.desc || item.description || item.takeaway || item.example, "Generated from Mistral semantic analysis."),
+    }));
+}
+
+function aiKeywords(items) {
+    if (!Array.isArray(items) || !items.length) return [];
+    return items.slice(0, 12).map((item) => ({
+        word: item.theme || item.label || item.word || String(item),
+        count: Number(item.count) || 1,
+    }));
+}
+
+function aiCategoryRows(items) {
+    if (!Array.isArray(items) || !items.length) return [];
+    return items.slice(0, 5).map((item) => {
+        const scoreNumber = Number(item.score) || 0;
+        const tone = scoreNumber >= 4 ? "positive" : scoreNumber >= 3 ? "neutral" : "negative";
+        return {
+            cat: item.category || item.cat || item.label || "Overall Experience",
+            score: scoreNumber ? scoreNumber.toFixed(1) : "0.0",
+            color: tone === "positive" ? "bg-secondary-fixed text-on-secondary-fixed" : tone === "neutral" ? "bg-surface-container text-on-surface-variant" : "bg-error-container text-on-error-container",
+            trend: `${Math.max(6, Math.round((scoreNumber / 5) * 100))}%`,
+            trendL: item.trend || (scoreNumber >= 4.6 ? "Peak" : scoreNumber >= 4 ? "High" : scoreNumber >= 3 ? "Mixed" : "Declining"),
+            trendC: tone === "positive" ? "bg-on-tertiary-container" : tone === "neutral" ? "bg-outline" : "bg-error",
+            quote: `"${compactText(item.takeaway || item.quote || item.summary, "No AI takeaway available.")}"`,
+        };
+    });
+}
+
 function InsightsProvider({ children }) {
     const [reviews, setReviews] = useState([]);
+    const [aiInsights, setAiInsights] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [query, setQuery] = useState("");
@@ -120,11 +299,17 @@ function InsightsProvider({ children }) {
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
     useEffect(() => {
-        fetchAllReviews().then(setReviews).catch((err) => setError(err.message || String(err))).finally(() => setLoading(false));
+        Promise.all([fetchAllReviews(), fetchAiInsights()])
+            .then(([reviewRows, insightRows]) => {
+                setReviews(reviewRows);
+                setAiInsights(insightRows);
+            })
+            .catch((err) => setError(err.message || String(err)))
+            .finally(() => setLoading(false));
     }, []);
     const value = useMemo(() => {
         const datedReviews = reviews
-            .map((review) => ({ review, date: parseReviewDate(review.review_date || review.created_at) }))
+            .map((review) => ({ review, date: parseReviewDate(review.review_date_iso || review.review_date || review.created_at) }))
             .filter((item) => !Number.isNaN(item.date.getTime()));
         const minDate = datedReviews.length ? new Date(Math.min(...datedReviews.map((item) => item.date.getTime()))) : null;
         const maxDate = datedReviews.length ? new Date(Math.max(...datedReviews.map((item) => item.date.getTime()))) : null;
@@ -134,6 +319,7 @@ function InsightsProvider({ children }) {
             toDate.setHours(23, 59, 59, 999);
         }
         const q = query.trim().toLowerCase();
+        const filtersActive = Boolean(q || ratingFilter !== "all" || sentimentFilter !== "all" || dateFrom || dateTo);
         const filteredReviews = reviews.filter((review) => {
             const rating = asNumber(review.rating);
             const reviewDate = parseReviewDate(review.review_date_iso || review.review_date || review.created_at);
@@ -159,7 +345,7 @@ function InsightsProvider({ children }) {
         const negativePct = reviews.length ? Math.round((negative / reviews.length) * 100) : 0;
         const scopedPositivePct = filteredReviews.length ? Math.round((scopedPositive / filteredReviews.length) * 100) : 0;
         const scopedNegativePct = filteredReviews.length ? Math.round((scopedNegative / filteredReviews.length) * 100) : 0;
-        const keywords = getKeywords(filteredReviews);
+        const keywords = !filtersActive && aiInsights ? (aiKeywords(aiInsights.keywords).length ? aiKeywords(aiInsights.keywords) : getKeywords(filteredReviews)) : getKeywords(filteredReviews);
         const fallbackPros = [
             { icon: "speed", title: "User Interface Speed", desc: "Users consistently praise the responsiveness and fast loading times of the dashboards." },
             { icon: "account_balance_wallet", title: "Card Management", desc: "The ease of creating and disabling virtual cards is a major high point for finance teams." },
@@ -189,9 +375,9 @@ function InsightsProvider({ children }) {
             maxDate,
             keywords,
             monthly: getMonthly(filteredReviews),
-            topPros: buildHighlights(filteredReviews, "pros", fallbackPros),
-            topCons: buildHighlights(filteredReviews, "cons", fallbackCons),
-            categoryRows: buildCategoryRows(filteredReviews),
+            topPros: !filtersActive && aiInsights ? (aiItems(aiInsights.top_pros, ["speed", "credit_card", "integration_instructions"]).length ? aiItems(aiInsights.top_pros, ["speed", "credit_card", "integration_instructions"]) : buildHighlights(filteredReviews, "pros", fallbackPros)) : buildHighlights(filteredReviews, "pros", fallbackPros),
+            topCons: !filtersActive && aiInsights ? (aiItems(aiInsights.top_cons, ["euro", "receipt_long", "sync_problem"]).length ? aiItems(aiInsights.top_cons, ["euro", "receipt_long", "sync_problem"]) : buildHighlights(filteredReviews, "cons", fallbackCons)) : buildHighlights(filteredReviews, "cons", fallbackCons),
+            categoryRows: !filtersActive && aiInsights ? (aiCategoryRows(aiInsights.categories).length ? aiCategoryRows(aiInsights.categories) : buildCategoryRows(filteredReviews)) : buildCategoryRows(filteredReviews),
             analytics: {
                 total: reviews.length,
                 filtered: filteredReviews.length,
@@ -221,7 +407,7 @@ function InsightsProvider({ children }) {
                 statusLabel: loading ? "Loading" : "Live Sync",
             },
         };
-    }, [reviews, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
+    }, [reviews, aiInsights, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
     return <InsightsContext.Provider value={value}>{children}</InsightsContext.Provider>;
 }
 
@@ -251,40 +437,25 @@ function compactText(value, fallback) {
 }
 
 function buildHighlights(reviews, field, fallbackItems) {
-    const icons = field === "pros"
-        ? ["speed", "account_balance_wallet", "integration_instructions"]
-        : ["euro", "receipt_long", "notifications_active"];
-    const stop = new Set("the and for with that this from are you your our can was very have has but not all more use using easy great good spendesk les des une pour dans avec est pas sur nous vous tres très outil avis simple utilisation software system platform".split(" "));
-    const counts = new Map();
-    const examples = new Map();
-    for (const review of reviews) {
-        const text = String(review.data?.[field] || "");
-        if (!text || text.length < 25) continue;
-        const words = text.toLowerCase().match(/[a-zÀ-ÿ][a-zÀ-ÿ'-]{3,}/g) || [];
-        for (const raw of words) {
-            const word = raw.replace(/^['-]+|['-]+$/g, "");
-            if (stop.has(word)) continue;
-            counts.set(word, (counts.get(word) || 0) + 1);
-            if (!examples.has(word)) examples.set(word, text);
-        }
-    }
-    const source = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const type = field === "pros" ? "pro" : "con";
+    const source = scoreThemes(reviews, { field, type }).filter((theme) => theme.count > 0).slice(0, 3);
     if (!source.length) return fallbackItems;
-    return source.map(([word, count], idx) => ({
-        icon: icons[idx % icons.length],
-        title: `${word.replace(/^\w/, (c) => c.toUpperCase())} (${count} mentions)`,
-        desc: compactText(examples.get(word), ""),
+    return source.map((theme) => ({
+        icon: theme.icon,
+        title: `${theme.label} (${theme.count} mentions)`,
+        desc: compactText(theme.sample?.data?.[field] || theme.sample?.data?.summary || theme.sample?.title, theme.fallback),
     }));
 }
 
 function buildCategoryRows(reviews) {
     const specs = [
-        { cat: "Features", words: ["feature", "features", "card", "virtual", "workflow", "approval"], quote: '"Virtual cards and automated approvals are top tier."' },
+        { cat: "Overall Experience", words: [], quote: '"Overall sentiment is driven by ease of use, control, and reliable finance workflows."' },
+        { cat: "Features", words: ["feature", "features", "card", "virtual", "workflow", "approval", "expense", "integration"], quote: '"Virtual cards and automated approvals are top tier."' },
         { cat: "Pricing", words: ["price", "pricing", "cost", "expensive", "plan", "value", "money"], quote: '"Value is high, but entry price is steep for SMBs."' },
         { cat: "Ease of Use", words: ["easy", "simple", "intuitive", "facile", "ux", "quick", "fast"], quote: '"Incredibly intuitive UX, almost zero learning curve."' },
     ];
     return specs.map((spec) => {
-        const matched = reviews.filter((review) => spec.words.some((word) => reviewText(review).includes(word)));
+        const matched = spec.words.length ? reviews.filter((review) => spec.words.some((word) => reviewText(review).includes(word))) : reviews;
         const source = matched.length ? matched : reviews;
         const ratings = source.map((review) => asNumber(review.rating)).filter((rating) => rating !== null);
         const scoreNumber = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : 0;
@@ -620,8 +791,8 @@ function buildCategoryRows(reviews) {
                                                     </div>
                                                 </div>
                                                 <div className="text-right">
-                                                    <div className="flex items-center text-secondary mb-2">
-                                                        {[1,2,3,4,5].map(s => <span key={s} className="material-symbols-outlined text-lg" style={{fontVariationSettings: s <= review.rating ? "'FILL' 1" : ""}}>star</span>)}
+                                                    <div className="flex items-center justify-end gap-0.5 mb-2" aria-label={`${review.rating} out of 5 stars`}>
+                                                        {[1,2,3,4,5].map(s => <span key={s} className={`text-xl leading-none ${s <= review.rating ? "text-secondary" : "text-outline-variant/40"}`}>★</span>)}
                                                     </div>
                                                     <span className="text-[10px] font-extrabold text-on-tertiary-container bg-tertiary-fixed-dim/20 px-3 py-1 rounded-full uppercase tracking-wider">{review.sentiment}</span>
                                                 </div>
@@ -757,10 +928,6 @@ function buildCategoryRows(reviews) {
                                 <div>
                                     <h2 className="text-display font-bold text-primary mb-2">Sentiment Analysis</h2>
                                     <p className="text-body-md text-on-surface-variant max-w-xl">A welcoming overview of real-time user perception synthesis across {analytics.filteredLabel} matching reviews.</p>
-                                </div>
-                                <div className="flex gap-4">
-                                    <button className="px-8 py-3 bg-white border border-outline-variant text-primary rounded-xl font-label-md hover:bg-surface-container transition-all shadow-sm">EXPORT</button>
-                                    <button className="px-8 py-3 bg-secondary text-on-secondary rounded-xl font-label-md hover:bg-secondary-container transition-all shadow-md">UPDATE SCAN</button>
                                 </div>
                             </div>
 
