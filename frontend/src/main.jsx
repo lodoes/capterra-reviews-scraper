@@ -9,6 +9,7 @@ const INSIGHTS_TABLE = import.meta.env.VITE_SUPABASE_INSIGHTS_TABLE || "capterra
 const PAGE_SIZE = 1000;
 const SEEN_REVIEWS_KEY = "spendesk_seen_review_fingerprints";
 const MISTRAL_SETTINGS_KEY = "spendesk_mistral_ai_settings";
+const DEFAULT_REVIEW_WINDOW_KEY = "spendesk_default_window";
 const InsightsContext = createContext(null);
 
 const DEFAULT_MISTRAL_SETTINGS = {
@@ -44,6 +45,18 @@ function parseReviewDate(value) {
 function dateInputValue(date) {
     if (!date || Number.isNaN(date.getTime())) return "";
     return date.toISOString().slice(0, 10);
+}
+
+function reviewWindowDates(windowValue, maxDate) {
+    if (!maxDate || Number.isNaN(maxDate.getTime()) || windowValue === "all") {
+        return { from: "", to: "" };
+    }
+    const days = Number(windowValue);
+    if (!Number.isFinite(days) || days <= 0) return { from: "", to: "" };
+    const to = new Date(maxDate);
+    const from = new Date(maxDate);
+    from.setDate(from.getDate() - (days - 1));
+    return { from: dateInputValue(from), to: dateInputValue(to) };
 }
 
 function sentimentForRating(value) {
@@ -585,6 +598,7 @@ function InsightsProvider({ children }) {
     const [sentimentFilter, setSentimentFilter] = useState("all");
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
+    const [defaultWindowApplied, setDefaultWindowApplied] = useState(false);
     useEffect(() => {
         let mounted = true;
         const refreshDashboardData = () => Promise.all([fetchAllReviews(), fetchAiInsights()])
@@ -594,6 +608,17 @@ function InsightsProvider({ children }) {
                 setAiInsights(insightRows?.insights || null);
                 setAiMeta(insightRows ? { model: insightRows.model, generatedAt: insightRows.generated_at, source: "Supabase" } : null);
                 setNewReviews(detectNewReviews(reviewRows));
+                if (!defaultWindowApplied && reviewRows.length) {
+                    const dates = reviewRows
+                        .map((review) => parseReviewDate(review.review_date_iso || review.review_date || review.created_at))
+                        .filter((date) => !Number.isNaN(date.getTime()));
+                    const maxReviewDate = dates.length ? new Date(Math.max(...dates.map((date) => date.getTime()))) : null;
+                    const defaultWindow = localStorage.getItem(DEFAULT_REVIEW_WINDOW_KEY) || "30";
+                    const windowDates = reviewWindowDates(defaultWindow, maxReviewDate);
+                    setDateFrom(windowDates.from);
+                    setDateTo(windowDates.to);
+                    setDefaultWindowApplied(true);
+                }
             })
             .catch((err) => {
                 if (mounted) setError(err.message || String(err));
@@ -607,7 +632,7 @@ function InsightsProvider({ children }) {
             mounted = false;
             window.clearInterval(interval);
         };
-    }, []);
+    }, [defaultWindowApplied]);
     const value = useMemo(() => {
         const datedReviews = reviews
             .map((review) => ({ review, date: parseReviewDate(review.review_date_iso || review.review_date || review.created_at) }))
@@ -949,7 +974,7 @@ function buildCategoryRows(reviews) {
                                     <details className="relative">
                                         <summary className="list-none flex items-center gap-2 px-6 py-3 border border-outline-variant text-on-surface font-label-md rounded-full hover:bg-surface-container-low transition-all cursor-pointer">
                                             <span className="material-symbols-outlined text-[20px]">calendar_today</span>
-                                            {dateFrom || dateTo ? `${dateFrom || dateInputValue(minDate)} - ${dateTo || dateInputValue(maxDate)}` : "Last 30 Days"}
+                                            {dateFrom || dateTo ? `${dateFrom || dateInputValue(minDate)} - ${dateTo || dateInputValue(maxDate)}` : "All time"}
                                         </summary>
                                         <div className="absolute right-0 mt-3 w-72 rounded-2xl bg-surface-container-lowest border border-outline-variant/40 p-4 shadow-xl z-50 space-y-3">
                                             <input className="w-full bg-surface-container-low border-none rounded-lg px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20" type="date" value={dateFrom} min={dateInputValue(minDate)} max={dateInputValue(maxDate)} onChange={(event) => setDateFrom(event.target.value)} />
@@ -1474,20 +1499,23 @@ function buildCategoryRows(reviews) {
         };
 
         const SettingsPage = () => {
-            const { aiMeta } = useInsights();
+            const { aiMeta, maxDate, setDateFrom, setDateTo } = useInsights();
             const [settings] = useState(readMistralSettings);
             const [testRunning, setTestRunning] = useState(false);
             const [testResult, setTestResult] = useState("");
             const [testError, setTestError] = useState("");
             const [saved, setSaved] = useState(false);
             const [savedDigest, setSavedDigest] = useState(() => localStorage.getItem("spendesk_notification_digest") || "instant");
-            const [savedWindow, setSavedWindow] = useState(() => localStorage.getItem("spendesk_default_window") || "90");
+            const [savedWindow, setSavedWindow] = useState(() => localStorage.getItem(DEFAULT_REVIEW_WINDOW_KEY) || "30");
             const [notificationDigest, setNotificationDigest] = useState(savedDigest);
             const [defaultWindow, setDefaultWindow] = useState(savedWindow);
             const hasUnsavedChanges = notificationDigest !== savedDigest || defaultWindow !== savedWindow;
             const savePreferences = () => {
                 localStorage.setItem("spendesk_notification_digest", notificationDigest);
-                localStorage.setItem("spendesk_default_window", defaultWindow);
+                localStorage.setItem(DEFAULT_REVIEW_WINDOW_KEY, defaultWindow);
+                const windowDates = reviewWindowDates(defaultWindow, maxDate);
+                setDateFrom(windowDates.from);
+                setDateTo(windowDates.to);
                 setSavedDigest(notificationDigest);
                 setSavedWindow(defaultWindow);
                 setSaved(true);
