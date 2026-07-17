@@ -330,7 +330,7 @@ async function fetchAiInsights() {
     });
     if (!response.ok) return null;
     const rows = await response.json();
-    return rows[0]?.insights || null;
+    return rows[0] || null;
 }
 
 const SEMANTIC_THEMES = [
@@ -541,6 +541,7 @@ function aiCategoryRows(items) {
 function InsightsProvider({ children }) {
     const [reviews, setReviews] = useState([]);
     const [aiInsights, setAiInsights] = useState(null);
+    const [aiMeta, setAiMeta] = useState(null);
     const [aiRunning, setAiRunning] = useState(false);
     const [aiError, setAiError] = useState("");
     const [aiLastRun, setAiLastRun] = useState(null);
@@ -558,7 +559,8 @@ function InsightsProvider({ children }) {
             .then(([reviewRows, insightRows]) => {
                 if (!mounted) return;
                 setReviews(reviewRows);
-                setAiInsights(insightRows);
+                setAiInsights(insightRows?.insights || null);
+                setAiMeta(insightRows ? { model: insightRows.model, generatedAt: insightRows.generated_at, source: "Supabase" } : null);
                 setNewReviews(detectNewReviews(reviewRows));
             })
             .catch((err) => {
@@ -636,13 +638,15 @@ function InsightsProvider({ children }) {
             aiRunning,
             aiError,
             aiLastRun,
+            aiMeta,
             runAiAnalysis: async (settings) => {
                 setAiRunning(true);
                 setAiError("");
                 try {
                     const payload = await runMistralAnalysis(settings);
                     setAiInsights(payload.insights || null);
-                    setAiLastRun({ analyzed: payload.analyzed, model: payload.model, at: new Date() });
+                    setAiLastRun({ analyzed: payload.analyzed, model: payload.model, at: new Date(), source: payload.source, persisted: payload.persisted });
+                    setAiMeta({ model: payload.model, generatedAt: new Date().toISOString(), source: payload.source || "Runtime" });
                     return payload;
                 } catch (err) {
                     const message = err.message || String(err);
@@ -704,7 +708,7 @@ function InsightsProvider({ children }) {
                 latestScrapeLabel: formatDateTime(latestScrapeAt),
             },
         };
-    }, [reviews, aiInsights, aiRunning, aiError, aiLastRun, newReviews, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
+    }, [reviews, aiInsights, aiMeta, aiRunning, aiError, aiLastRun, newReviews, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
     return <InsightsContext.Provider value={value}>{children}</InsightsContext.Provider>;
 }
 
@@ -1258,7 +1262,7 @@ function buildCategoryRows(reviews) {
         };
 
         const SentimentPage = () => {
-            const { analytics, keywords, categoryRows } = useInsights();
+            const { analytics, keywords, categoryRows, aiMeta } = useInsights();
             const keywordTags = keywords.length
                 ? keywords.map((item, idx) => ({
                     t: item.word,
@@ -1279,6 +1283,13 @@ function buildCategoryRows(reviews) {
                                 <div>
                                     <h2 className="text-display font-bold text-primary mb-2">Sentiment Analysis</h2>
                                     <p className="text-body-md text-on-surface-variant max-w-xl">A welcoming overview of real-time user perception synthesis across {analytics.filteredLabel} matching reviews.</p>
+                                </div>
+                                <div className={`hidden md:flex items-center gap-3 px-5 py-3 rounded-full border ${aiMeta ? "bg-secondary/10 border-secondary/20 text-secondary" : "bg-surface-container-low border-outline-variant/30 text-on-surface-variant"}`}>
+                                    <span className="material-symbols-outlined text-[20px]">{aiMeta ? "auto_awesome" : "schema"}</span>
+                                    <div className="text-left">
+                                        <p className="text-[10px] uppercase tracking-widest font-extrabold">{aiMeta ? "Mistral active" : "Local synthesis"}</p>
+                                        <p className="text-[11px] font-bold">{aiMeta ? `${aiMeta.model || "model"} - ${formatDateTime(aiMeta.generatedAt)}` : "No AI insights saved yet"}</p>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1374,7 +1385,7 @@ function buildCategoryRows(reviews) {
         };
 
         const SettingsPage = () => {
-            const { aiRunning, aiError, aiLastRun, runAiAnalysis } = useInsights();
+            const { aiRunning, aiError, aiLastRun, aiMeta, runAiAnalysis } = useInsights();
             const [settings, setSettings] = useState(readMistralSettings);
             const [saved, setSaved] = useState(false);
             const [showKey, setShowKey] = useState(false);
@@ -1556,6 +1567,10 @@ function buildCategoryRows(reviews) {
                                             <div>
                                                 <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Model</p>
                                                 <p className="font-label-md">{settings.model || DEFAULT_MISTRAL_SETTINGS.model}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Loaded insights</p>
+                                                <p className="font-label-md">{aiMeta ? `${aiMeta.model || "model"} - ${formatDateTime(aiMeta.generatedAt)}` : "No saved AI insights loaded"}</p>
                                             </div>
                                         </div>
                                     </div>
