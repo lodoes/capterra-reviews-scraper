@@ -1474,76 +1474,57 @@ function buildCategoryRows(reviews) {
         };
 
         const SettingsPage = () => {
-            const { aiRunning, aiError, aiLastRun, aiMeta, runAiAnalysis } = useInsights();
-            const [settings, setSettings] = useState(readMistralSettings);
-            const [saved, setSaved] = useState(false);
-            const [showKey, setShowKey] = useState(false);
-            const [runResult, setRunResult] = useState("");
+            const { aiMeta } = useInsights();
+            const [settings] = useState(readMistralSettings);
             const [testRunning, setTestRunning] = useState(false);
             const [testResult, setTestResult] = useState("");
             const [testError, setTestError] = useState("");
-            const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
-            const [diagnostics, setDiagnostics] = useState([]);
-            const maskedKey = settings.apiKey ? `${settings.apiKey.slice(0, 10)}${"•".repeat(Math.max(0, Math.min(18, settings.apiKey.length - 10)))}` : "No key saved";
-            const command = [
-                '$env:SUPABASE_URL="https://xxxx.supabase.co"',
-                '$env:SUPABASE_SERVICE_ROLE_KEY="..."',
-                `$env:MISTRAL_API_KEY="${settings.apiKey || "..."}"`,
-                `$env:MISTRAL_MODEL="${settings.model || DEFAULT_MISTRAL_SETTINGS.model}"`,
-                `$env:MISTRAL_REVIEW_PROMPT=@'\n${settings.prompt || DEFAULT_MISTRAL_SETTINGS.prompt}\n'@`,
-                "python analyze_reviews_mistral.py --product-slug spendesk",
-            ].join("\n");
-            const updateSetting = (key, value) => {
-                setSaved(false);
-                setSettings((current) => ({ ...current, [key]: value }));
-            };
-            const saveSettings = () => {
-                writeMistralSettings(settings);
-                setSaved(true);
-            };
-            const startAnalysis = async () => {
-                saveSettings();
-                setRunResult("");
-                try {
-                    const payload = await runAiAnalysis(settings);
-                    const sourceLabel = payload.source === "supabase-edge" ? "Supabase Edge Function" : "browser fallback";
-                    const persistenceLabel = payload.persisted === false ? "Displayed locally; Supabase persistence was not allowed." : "Insights saved to Supabase.";
-                    setRunResult(`${payload.analyzed} reviews analyzed with ${payload.model} via ${sourceLabel}. ${persistenceLabel}`);
-                } catch (err) {
-                    setRunResult("");
-                }
+            const [notificationDigest, setNotificationDigest] = useState(() => localStorage.getItem("spendesk_notification_digest") || "instant");
+            const [defaultWindow, setDefaultWindow] = useState(() => localStorage.getItem("spendesk_default_window") || "90");
+            const savePreference = (key, value) => {
+                localStorage.setItem(key, value);
             };
             const startConnectionTest = async () => {
-                saveSettings();
                 setTestRunning(true);
                 setTestResult("");
                 setTestError("");
                 try {
-                    const payload = await testMistralConnection(settings);
-                    setTestResult(`Connection OK via ${payload.source} using ${payload.model}.`);
+                    await testMistralConnection(settings);
+                    setTestResult("Reviews database and AI enrichment are reachable.");
                 } catch (err) {
-                    setTestError(err.message || String(err));
+                    setTestError("The analytics connection is not fully ready yet. Check the production setup before presenting the dashboard.");
                 } finally {
                     setTestRunning(false);
                 }
             };
-            const startDiagnostics = async () => {
-                setDiagnosticsRunning(true);
-                try {
-                    setDiagnostics(await runAiDiagnostics());
-                } finally {
-                    setDiagnosticsRunning(false);
-                }
+            const updateDigest = (value) => {
+                setNotificationDigest(value);
+                savePreference("spendesk_notification_digest", value);
             };
-            const resetSettings = () => {
-                setSettings(DEFAULT_MISTRAL_SETTINGS);
-                writeMistralSettings(DEFAULT_MISTRAL_SETTINGS);
-                setSaved(true);
+            const updateWindow = (value) => {
+                setDefaultWindow(value);
+                savePreference("spendesk_default_window", value);
             };
-            const copyCommand = () => {
-                navigator.clipboard?.writeText(command);
-                setSaved(true);
-            };
+            const healthCards = [
+                {
+                    label: "Reviews database",
+                    value: SUPABASE_URL ? "Connected" : "Missing config",
+                    icon: "database",
+                    ok: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY),
+                },
+                {
+                    label: "AI enrichment",
+                    value: aiMeta ? "Active" : "Waiting for insights",
+                    icon: "auto_awesome",
+                    ok: Boolean(aiMeta),
+                },
+                {
+                    label: "Notifications",
+                    value: notificationDigest === "instant" ? "Instant" : "Daily digest",
+                    icon: "notifications",
+                    ok: true,
+                },
+            ];
             return (
                 <div className="animate-fade-in">
                     <TopBar title="Search settings..." />
@@ -1552,10 +1533,10 @@ function buildCategoryRows(reviews) {
                             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                                 <div>
                                     <h2 className="text-display font-bold text-primary mb-2">Settings</h2>
-                                    <p className="text-body-md text-on-surface-variant max-w-2xl">Configure the Mistral analysis layer used to turn raw reviews into coherent themes, keywords, pros, cons, and categorized performance.</p>
+                                    <p className="text-body-md text-on-surface-variant max-w-2xl">Control how the analytics workspace refreshes, alerts you about new reviews, and validates the data connection.</p>
                                 </div>
-                                <div className={`px-4 py-2 rounded-full text-label-md font-bold ${saved ? "bg-tertiary-fixed text-on-tertiary-container" : "bg-surface-container text-on-surface-variant"}`}>
-                                    {saved ? "Saved locally" : "Local settings"}
+                                <div className="px-4 py-2 rounded-full text-label-md font-bold bg-tertiary-fixed text-on-tertiary-container">
+                                    Analytics workspace
                                 </div>
                             </div>
 
@@ -1563,80 +1544,86 @@ function buildCategoryRows(reviews) {
                                 <section className="xl:col-span-2 bg-surface-container-lowest border border-outline-variant/40 rounded-lg p-8 shadow-sm">
                                     <div className="flex items-start gap-4 mb-8">
                                         <div className="w-12 h-12 rounded-xl bg-secondary/10 text-secondary flex items-center justify-center">
-                                            <span className="material-symbols-outlined">auto_awesome</span>
+                                            <span className="material-symbols-outlined">tune</span>
                                         </div>
                                         <div>
-                                            <h3 className="text-headline-md font-extrabold text-primary">Mistral AI</h3>
-                                            <p className="text-body-md text-on-surface-variant">Store your API key, model, and prompt template for the review analysis job.</p>
+                                            <h3 className="text-headline-md font-extrabold text-primary">Workspace preferences</h3>
+                                            <p className="text-body-md text-on-surface-variant">Keep the dashboard presentation-ready while the technical AI and scraping pipeline stays behind the scenes.</p>
                                         </div>
                                     </div>
 
                                     <div className="space-y-6">
-                                        <div>
-                                            <label className="block text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-3">API Key</label>
-                                            <div className="flex gap-3">
-                                                <input
-                                                    value={settings.apiKey}
-                                                    onChange={(event) => updateSetting("apiKey", event.target.value)}
-                                                    className="flex-1 bg-surface-container-low border-none rounded-xl px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20"
-                                                    placeholder="mistral api key"
-                                                    type={showKey ? "text" : "password"}
-                                                />
-                                                <button type="button" onClick={() => setShowKey((current) => !current)} className="w-12 h-12 rounded-xl bg-surface-container-low text-on-surface-variant hover:text-secondary transition-colors flex items-center justify-center">
-                                                    <span className="material-symbols-outlined">{showKey ? "visibility_off" : "visibility"}</span>
-                                                </button>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            {healthCards.map((card) => (
+                                                <div key={card.label} className="rounded-xl bg-surface-container-low p-5 border border-outline-variant/30">
+                                                    <div className="flex items-center justify-between mb-5">
+                                                        <span className="material-symbols-outlined text-secondary">{card.icon}</span>
+                                                        <span className={`material-symbols-outlined ${card.ok ? "text-secondary" : "text-outline"}`}>{card.ok ? "check_circle" : "radio_button_unchecked"}</span>
+                                                    </div>
+                                                    <p className="text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-2">{card.label}</p>
+                                                    <p className="text-headline-sm font-extrabold text-primary">{card.value}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="rounded-xl bg-surface-container-low p-5 border border-outline-variant/30">
+                                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-2">Default review window</p>
+                                                    <p className="text-body-sm text-on-surface-variant">Controls the initial analysis period shown when opening the dashboard.</p>
+                                                </div>
+                                                <div className="flex rounded-full bg-surface-container-lowest p-1">
+                                                    {[
+                                                        { value: "30", label: "30 days" },
+                                                        { value: "90", label: "90 days" },
+                                                        { value: "all", label: "All time" },
+                                                    ].map((item) => (
+                                                        <button
+                                                            key={item.value}
+                                                            type="button"
+                                                            onClick={() => updateWindow(item.value)}
+                                                            className={`px-4 py-2 rounded-full text-label-md font-bold transition-all ${defaultWindow === item.value ? "bg-secondary text-on-secondary shadow-sm" : "text-on-surface-variant hover:text-primary"}`}
+                                                        >
+                                                            {item.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             </div>
-                                            <p className="text-[11px] text-on-surface-variant mt-2">Saved in this browser only. Do not put this key in the public frontend env.</p>
                                         </div>
 
-                                        <div>
-                                            <label className="block text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-3">Model</label>
-                                            <input
-                                                value={settings.model}
-                                                onChange={(event) => updateSetting("model", event.target.value)}
-                                                className="w-full bg-surface-container-low border-none rounded-xl px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20"
-                                                placeholder="mistral-small-latest"
-                                                list="mistral-models"
-                                            />
-                                            <datalist id="mistral-models">
-                                                <option value="mistral-small-latest" />
-                                                <option value="mistral-medium-latest" />
-                                                <option value="mistral-large-latest" />
-                                            </datalist>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-3">AI Prompt</label>
-                                            <textarea
-                                                value={settings.prompt}
-                                                onChange={(event) => updateSetting("prompt", event.target.value)}
-                                                className="w-full min-h-56 bg-surface-container-low border-none rounded-xl px-4 py-4 text-body-md leading-relaxed focus:ring-2 focus:ring-secondary/20"
-                                                placeholder="Tell Mistral how to group reviews..."
-                                            />
+                                        <div className="rounded-xl bg-surface-container-low p-5 border border-outline-variant/30">
+                                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                                <div>
+                                                    <p className="text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-2">New review alerts</p>
+                                                    <p className="text-body-sm text-on-surface-variant">Choose how the notification bell behaves when fresh Capterra reviews appear.</p>
+                                                </div>
+                                                <div className="flex rounded-full bg-surface-container-lowest p-1">
+                                                    {[
+                                                        { value: "instant", label: "Instant" },
+                                                        { value: "daily", label: "Daily" },
+                                                    ].map((item) => (
+                                                        <button
+                                                            key={item.value}
+                                                            type="button"
+                                                            onClick={() => updateDigest(item.value)}
+                                                            className={`px-4 py-2 rounded-full text-label-md font-bold transition-all ${notificationDigest === item.value ? "bg-secondary text-on-secondary shadow-sm" : "text-on-surface-variant hover:text-primary"}`}
+                                                        >
+                                                            {item.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
                                         </div>
 
                                         <div className="flex flex-wrap gap-3 pt-2">
-                                            <button type="button" onClick={saveSettings} className="px-6 py-3 bg-secondary text-on-secondary rounded-xl font-label-md shadow-sm hover:bg-secondary-container transition-all">Save settings</button>
-                                            <button type="button" onClick={startConnectionTest} disabled={testRunning || aiRunning} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all disabled:opacity-60 disabled:cursor-not-allowed">
+                                            <button type="button" onClick={startConnectionTest} disabled={testRunning} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all disabled:opacity-60 disabled:cursor-not-allowed">
                                                 {testRunning ? "Testing..." : "Test connection"}
                                             </button>
-                                            <button type="button" onClick={startAnalysis} disabled={aiRunning} className="px-6 py-3 bg-primary text-on-primary rounded-xl font-label-md shadow-sm hover:bg-secondary transition-all disabled:opacity-60 disabled:cursor-not-allowed">
-                                                {aiRunning ? "Running analysis..." : "Run Mistral analysis"}
-                                            </button>
-                                            <button type="button" onClick={resetSettings} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all">Reset</button>
                                         </div>
                                         {(testResult || testError) && (
                                             <div className={`rounded-xl p-4 border ${testError ? "bg-error-container/20 border-error-container text-error" : "bg-secondary/10 border-secondary/20 text-secondary"}`}>
                                                 <p className="font-bold text-label-md">{testError ? "Connection failed" : "Connection verified"}</p>
                                                 <p className="text-body-sm mt-1">{testError || testResult}</p>
-                                            </div>
-                                        )}
-                                        {(runResult || aiError || aiLastRun) && (
-                                            <div className={`rounded-xl p-4 border ${aiError ? "bg-error-container/20 border-error-container text-error" : "bg-tertiary-fixed/20 border-tertiary-fixed/40 text-on-tertiary-container"}`}>
-                                                <p className="font-bold text-label-md">{aiError ? "Analysis failed" : "Analysis ready"}</p>
-                                                <p className="text-body-sm mt-1">
-                                                    {aiError || runResult || `${aiLastRun?.analyzed || 0} reviews analyzed with ${aiLastRun?.model || settings.model}.`}
-                                                </p>
                                             </div>
                                         )}
                                     </div>
@@ -1645,60 +1632,19 @@ function buildCategoryRows(reviews) {
                                 <aside className="space-y-6">
                                     <div className="bg-primary text-on-primary rounded-lg p-6 shadow-sm">
                                         <div className="flex items-center justify-between mb-6">
-                                            <span className="text-[10px] uppercase tracking-[0.15em] font-extrabold opacity-70">Current AI Config</span>
-                                            <span className="material-symbols-outlined">lock</span>
+                                            <span className="text-[10px] uppercase tracking-[0.15em] font-extrabold opacity-70">Insight status</span>
+                                            <span className="material-symbols-outlined">insights</span>
                                         </div>
                                         <div className="space-y-4">
                                             <div>
-                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Key</p>
-                                                <p className="font-label-md break-all">{maskedKey}</p>
+                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">AI themes</p>
+                                                <p className="font-label-md">{aiMeta ? "Loaded from saved analysis" : "Using local synthesis"}</p>
                                             </div>
                                             <div>
-                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Model</p>
-                                                <p className="font-label-md">{settings.model || DEFAULT_MISTRAL_SETTINGS.model}</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Loaded insights</p>
-                                                <p className="font-label-md">{aiMeta ? `${aiMeta.model || "model"} - ${formatDateTime(aiMeta.generatedAt)}` : "No saved AI insights loaded"}</p>
+                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Last enrichment</p>
+                                                <p className="font-label-md">{aiMeta ? formatDateTime(aiMeta.generatedAt) : "Not available yet"}</p>
                                             </div>
                                         </div>
-                                    </div>
-
-                                    <div className="bg-surface-container-lowest border border-outline-variant/40 rounded-lg p-6 shadow-sm">
-                                        <div className="flex items-start justify-between gap-4 mb-4">
-                                            <div>
-                                                <h3 className="text-headline-sm font-extrabold text-primary mb-2">AI diagnostics</h3>
-                                                <p className="text-body-sm text-on-surface-variant">Check Supabase tables and Edge Function reachability before running the full analysis.</p>
-                                            </div>
-                                            <button type="button" onClick={startDiagnostics} disabled={diagnosticsRunning} className="px-4 py-2 rounded-xl bg-surface-container-low text-primary font-label-md hover:bg-surface-container transition-all disabled:opacity-60">
-                                                {diagnosticsRunning ? "Checking" : "Run"}
-                                            </button>
-                                        </div>
-                                        <div className="space-y-2">
-                                            {(diagnostics.length ? diagnostics : [
-                                                { name: "Supabase env", ok: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY), detail: SUPABASE_URL ? new URL(SUPABASE_URL).host : "Not checked yet" },
-                                                { name: "Reviews table", ok: null, detail: "Run diagnostics" },
-                                                { name: "Insights table", ok: null, detail: "Run diagnostics" },
-                                                { name: "Edge Function", ok: null, detail: "Run diagnostics" },
-                                            ]).map((check) => (
-                                                <div key={check.name} className="flex items-center justify-between gap-3 rounded-xl bg-surface-container-low px-4 py-3">
-                                                    <div>
-                                                        <p className="font-bold text-label-md text-primary">{check.name}</p>
-                                                        <p className="text-[11px] text-on-surface-variant break-all">{check.detail}</p>
-                                                    </div>
-                                                    <span className={`material-symbols-outlined ${check.ok === true ? "text-secondary" : check.ok === false ? "text-error" : "text-outline"}`}>
-                                                        {check.ok === true ? "check_circle" : check.ok === false ? "error" : "radio_button_unchecked"}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div className="bg-surface-container-lowest border border-outline-variant/40 rounded-lg p-6 shadow-sm">
-                                        <h3 className="text-headline-sm font-extrabold text-primary mb-2">Run command</h3>
-                                        <p className="text-body-sm text-on-surface-variant mb-4">Use this locally or in a secure job. The browser should not call Mistral directly.</p>
-                                        <pre className="bg-surface-container-low rounded-xl p-4 text-[11px] leading-relaxed whitespace-pre-wrap break-all text-on-surface-variant">{command}</pre>
-                                        <button type="button" onClick={copyCommand} className="mt-4 w-full py-3 bg-secondary text-on-secondary rounded-xl font-label-md hover:bg-secondary-container transition-all">Copy command</button>
                                     </div>
                                 </aside>
                             </div>
