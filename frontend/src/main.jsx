@@ -8,7 +8,14 @@ const TABLE = import.meta.env.VITE_SUPABASE_TABLE || "capterra_reviews";
 const INSIGHTS_TABLE = import.meta.env.VITE_SUPABASE_INSIGHTS_TABLE || "capterra_review_insights";
 const PAGE_SIZE = 1000;
 const SEEN_REVIEWS_KEY = "spendesk_seen_review_fingerprints";
+const MISTRAL_SETTINGS_KEY = "spendesk_mistral_ai_settings";
 const InsightsContext = createContext(null);
+
+const DEFAULT_MISTRAL_SETTINGS = {
+    apiKey: "",
+    model: "mistral-small-latest",
+    prompt: "Group Capterra reviews into coherent business themes. Return clean keywords, top pros, top cons, and categorized performance with an overall synthesis. Avoid malformed words, raw stop words, generic brand-only terms, and vague labels.",
+};
 
 function asNumber(value) {
     const n = Number.parseFloat(value);
@@ -89,6 +96,19 @@ function detectNewReviews(reviews) {
         const id = reviewId(review);
         return id && !seen.has(id);
     }).slice(0, 10);
+}
+
+function readMistralSettings() {
+    if (typeof window === "undefined") return DEFAULT_MISTRAL_SETTINGS;
+    try {
+        return { ...DEFAULT_MISTRAL_SETTINGS, ...JSON.parse(window.localStorage.getItem(MISTRAL_SETTINGS_KEY) || "{}") };
+    } catch {
+        return DEFAULT_MISTRAL_SETTINGS;
+    }
+}
+
+function writeMistralSettings(settings) {
+    window.localStorage.setItem(MISTRAL_SETTINGS_KEY, JSON.stringify(settings));
 }
 
 function isFilterableReview(review) {
@@ -550,7 +570,8 @@ function buildCategoryRows(reviews) {
     const navItems = [
         { path: 'overview', label: 'Overview', icon: 'dashboard' },
         { path: 'sentiment', label: 'Sentiment', icon: 'analytics' },
-        { path: 'reviews', label: 'Reviews', icon: 'forum' }
+        { path: 'reviews', label: 'Reviews', icon: 'forum' },
+        { path: 'settings', label: 'Settings', icon: 'settings' }
     ];
 
     return (
@@ -1145,6 +1166,146 @@ function buildCategoryRows(reviews) {
             );
         };
 
+        const SettingsPage = () => {
+            const [settings, setSettings] = useState(readMistralSettings);
+            const [saved, setSaved] = useState(false);
+            const [showKey, setShowKey] = useState(false);
+            const maskedKey = settings.apiKey ? `${settings.apiKey.slice(0, 10)}${"•".repeat(Math.max(0, Math.min(18, settings.apiKey.length - 10)))}` : "No key saved";
+            const command = [
+                '$env:SUPABASE_URL="https://xxxx.supabase.co"',
+                '$env:SUPABASE_SERVICE_ROLE_KEY="..."',
+                `$env:MISTRAL_API_KEY="${settings.apiKey || "..."}"`,
+                `$env:MISTRAL_MODEL="${settings.model || DEFAULT_MISTRAL_SETTINGS.model}"`,
+                `$env:MISTRAL_REVIEW_PROMPT=@'\n${settings.prompt || DEFAULT_MISTRAL_SETTINGS.prompt}\n'@`,
+                "python analyze_reviews_mistral.py --product-slug spendesk",
+            ].join("\n");
+            const updateSetting = (key, value) => {
+                setSaved(false);
+                setSettings((current) => ({ ...current, [key]: value }));
+            };
+            const saveSettings = () => {
+                writeMistralSettings(settings);
+                setSaved(true);
+            };
+            const resetSettings = () => {
+                setSettings(DEFAULT_MISTRAL_SETTINGS);
+                writeMistralSettings(DEFAULT_MISTRAL_SETTINGS);
+                setSaved(true);
+            };
+            const copyCommand = () => {
+                navigator.clipboard?.writeText(command);
+                setSaved(true);
+            };
+            return (
+                <div className="animate-fade-in">
+                    <TopBar title="Search settings..." />
+                    <main className="ml-64 pt-28 pb-16 px-lg">
+                        <div className="max-w-[1180px] mx-auto space-y-8">
+                            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                                <div>
+                                    <h2 className="text-display font-bold text-primary mb-2">Settings</h2>
+                                    <p className="text-body-md text-on-surface-variant max-w-2xl">Configure the Mistral analysis layer used to turn raw reviews into coherent themes, keywords, pros, cons, and categorized performance.</p>
+                                </div>
+                                <div className={`px-4 py-2 rounded-full text-label-md font-bold ${saved ? "bg-tertiary-fixed text-on-tertiary-container" : "bg-surface-container text-on-surface-variant"}`}>
+                                    {saved ? "Saved locally" : "Local settings"}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                                <section className="xl:col-span-2 bg-surface-container-lowest border border-outline-variant/40 rounded-lg p-8 shadow-sm">
+                                    <div className="flex items-start gap-4 mb-8">
+                                        <div className="w-12 h-12 rounded-xl bg-secondary/10 text-secondary flex items-center justify-center">
+                                            <span className="material-symbols-outlined">auto_awesome</span>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-headline-md font-extrabold text-primary">Mistral AI</h3>
+                                            <p className="text-body-md text-on-surface-variant">Store your API key, model, and prompt template for the review analysis job.</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-6">
+                                        <div>
+                                            <label className="block text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-3">API Key</label>
+                                            <div className="flex gap-3">
+                                                <input
+                                                    value={settings.apiKey}
+                                                    onChange={(event) => updateSetting("apiKey", event.target.value)}
+                                                    className="flex-1 bg-surface-container-low border-none rounded-xl px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20"
+                                                    placeholder="mistral api key"
+                                                    type={showKey ? "text" : "password"}
+                                                />
+                                                <button type="button" onClick={() => setShowKey((current) => !current)} className="w-12 h-12 rounded-xl bg-surface-container-low text-on-surface-variant hover:text-secondary transition-colors flex items-center justify-center">
+                                                    <span className="material-symbols-outlined">{showKey ? "visibility_off" : "visibility"}</span>
+                                                </button>
+                                            </div>
+                                            <p className="text-[11px] text-on-surface-variant mt-2">Saved in this browser only. Do not put this key in the public frontend env.</p>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-3">Model</label>
+                                            <input
+                                                value={settings.model}
+                                                onChange={(event) => updateSetting("model", event.target.value)}
+                                                className="w-full bg-surface-container-low border-none rounded-xl px-4 py-3 text-label-md focus:ring-2 focus:ring-secondary/20"
+                                                placeholder="mistral-small-latest"
+                                                list="mistral-models"
+                                            />
+                                            <datalist id="mistral-models">
+                                                <option value="mistral-small-latest" />
+                                                <option value="mistral-medium-latest" />
+                                                <option value="mistral-large-latest" />
+                                            </datalist>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-[10px] uppercase tracking-[0.15em] font-extrabold text-on-surface-variant mb-3">AI Prompt</label>
+                                            <textarea
+                                                value={settings.prompt}
+                                                onChange={(event) => updateSetting("prompt", event.target.value)}
+                                                className="w-full min-h-56 bg-surface-container-low border-none rounded-xl px-4 py-4 text-body-md leading-relaxed focus:ring-2 focus:ring-secondary/20"
+                                                placeholder="Tell Mistral how to group reviews..."
+                                            />
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-3 pt-2">
+                                            <button type="button" onClick={saveSettings} className="px-6 py-3 bg-secondary text-on-secondary rounded-xl font-label-md shadow-sm hover:bg-secondary-container transition-all">Save settings</button>
+                                            <button type="button" onClick={resetSettings} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all">Reset</button>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <aside className="space-y-6">
+                                    <div className="bg-primary text-on-primary rounded-lg p-6 shadow-sm">
+                                        <div className="flex items-center justify-between mb-6">
+                                            <span className="text-[10px] uppercase tracking-[0.15em] font-extrabold opacity-70">Current AI Config</span>
+                                            <span className="material-symbols-outlined">lock</span>
+                                        </div>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Key</p>
+                                                <p className="font-label-md break-all">{maskedKey}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-widest opacity-60 font-bold">Model</p>
+                                                <p className="font-label-md">{settings.model || DEFAULT_MISTRAL_SETTINGS.model}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-surface-container-lowest border border-outline-variant/40 rounded-lg p-6 shadow-sm">
+                                        <h3 className="text-headline-sm font-extrabold text-primary mb-2">Run command</h3>
+                                        <p className="text-body-sm text-on-surface-variant mb-4">Use this locally or in a secure job. The browser should not call Mistral directly.</p>
+                                        <pre className="bg-surface-container-low rounded-xl p-4 text-[11px] leading-relaxed whitespace-pre-wrap break-all text-on-surface-variant">{command}</pre>
+                                        <button type="button" onClick={copyCommand} className="mt-4 w-full py-3 bg-secondary text-on-secondary rounded-xl font-label-md hover:bg-secondary-container transition-all">Copy command</button>
+                                    </div>
+                                </aside>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
 const App = () => {
     const [activePage, setActivePage] = useState('overview');
     return (
@@ -1152,7 +1313,7 @@ const App = () => {
             <div className="flex bg-surface min-h-screen">
                 <Sidebar activePage={activePage} setActivePage={setActivePage} />
                 <div className="flex-1">
-                    {activePage === 'reviews' ? <ReviewsPage /> : activePage === 'sentiment' ? <SentimentPage /> : <OverviewPage />}
+                    {activePage === 'settings' ? <SettingsPage /> : activePage === 'reviews' ? <ReviewsPage /> : activePage === 'sentiment' ? <SentimentPage /> : <OverviewPage />}
                 </div>
             </div>
         </InsightsProvider>

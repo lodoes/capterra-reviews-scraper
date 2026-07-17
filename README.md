@@ -113,6 +113,8 @@ Le front peut lire des insights IA depuis `capterra_review_insights`. Execute d'
 $env:SUPABASE_URL="https://xxxx.supabase.co"
 $env:SUPABASE_SERVICE_ROLE_KEY="..."
 $env:MISTRAL_API_KEY="..."
+$env:MISTRAL_MODEL="mistral-small-latest"
+$env:MISTRAL_REVIEW_PROMPT="Group reviews into coherent business themes with clean keywords."
 python analyze_reviews_mistral.py --product-slug spendesk
 ```
 

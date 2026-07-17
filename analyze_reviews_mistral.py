@@ -14,6 +14,11 @@ import requests
 
 
 DEFAULT_MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
+DEFAULT_REVIEW_PROMPT = (
+    "Group Capterra reviews into coherent business themes. Return clean keywords, top pros, top cons, "
+    "and categorized performance with an overall synthesis. Avoid malformed words, raw stop words, "
+    "generic brand-only terms, and vague labels."
+)
 REVIEWS_TABLE = os.environ.get("SUPABASE_TABLE", "capterra_reviews")
 INSIGHTS_TABLE = os.environ.get("SUPABASE_INSIGHTS_TABLE", "capterra_review_insights")
 
@@ -61,7 +66,7 @@ def compact_review(review: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_prompt(product_slug: str, reviews: list[dict[str, Any]]) -> list[dict[str, str]]:
+def build_prompt(product_slug: str, reviews: list[dict[str, Any]], review_prompt: str) -> list[dict[str, str]]:
     payload = [compact_review(review) for review in reviews]
     schema = {
         "keywords": [{"theme": "Clear semantic keyword, no typo", "count": 12}],
@@ -78,6 +83,7 @@ def build_prompt(product_slug: str, reviews: list[dict[str, Any]]) -> list[dict[
     )
     user = {
         "task": f"Create coherent analytics insights for Capterra reviews of {product_slug}.",
+        "analysis_instructions": review_prompt,
         "output_schema": schema,
         "required_categories": ["Overall Experience", "Features", "Pricing", "Ease of Use"],
         "reviews": payload,
@@ -131,6 +137,7 @@ def main() -> None:
     parser.add_argument("--product-slug", default="spendesk")
     parser.add_argument("--limit", type=int, default=240, help="Nombre de reviews envoyees a Mistral.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--prompt", default=os.environ.get("MISTRAL_REVIEW_PROMPT", DEFAULT_REVIEW_PROMPT))
     args = parser.parse_args()
 
     supabase_url = require_env("SUPABASE_URL")
@@ -141,7 +148,7 @@ def main() -> None:
     if not reviews:
         raise RuntimeError("Aucune review trouvee dans Supabase.")
 
-    insights = call_mistral(mistral_key, args.model, build_prompt(args.product_slug, reviews))
+    insights = call_mistral(mistral_key, args.model, build_prompt(args.product_slug, reviews, args.prompt))
     save_insights(supabase_url, supabase_key, args.product_slug, args.model, insights)
     print(f"Insights IA sauvegardes pour {args.product_slug}: {len(reviews)} reviews analysees.")
 
