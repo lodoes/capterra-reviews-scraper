@@ -122,7 +122,10 @@ Le script regroupe les avis par champs lexicaux coherents : pros, cons, keywords
 
 ### Depuis l'interface Settings
 
-Le dashboard contient une page **Settings** avec un bouton `Run Mistral analysis`.
+Le dashboard contient une page **Settings** avec :
+
+- `Test connection` pour verifier la cle et le modele Mistral sans analyser les reviews.
+- `Run Mistral analysis` pour generer les insights et les injecter dans le dashboard.
 
 Le bouton essaie d'abord la Supabase Edge Function. Si elle n'est pas encore deployee et qu'une cle Mistral est saisie dans Settings, le front tente un fallback direct via l'API Mistral depuis le navigateur, puis sauvegarde les insights dans `capterra_review_insights`.
 

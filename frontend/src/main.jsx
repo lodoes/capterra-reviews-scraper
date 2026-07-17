@@ -223,6 +223,41 @@ async function saveBrowserInsights(settings, insights) {
     return response.ok;
 }
 
+async function testMistralConnection(settings) {
+    const model = settings.model || DEFAULT_MISTRAL_SETTINGS.model;
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+        const edgeResponse = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
+            method: "POST",
+            headers: {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ action: "test", model, mistralApiKey: settings.apiKey || undefined }),
+        });
+        const edgePayload = await edgeResponse.json().catch(() => ({}));
+        if (edgeResponse.ok && edgePayload.ok !== false) return { ok: true, source: "Supabase Edge Function", model };
+        if (!settings.apiKey) throw new Error(edgePayload.error || `Connection test failed (${edgeResponse.status})`);
+    }
+    if (!settings.apiKey) throw new Error("Add a Mistral API key or configure MISTRAL_API_KEY in the Supabase Edge Function.");
+    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${settings.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+            model,
+            messages: [
+                { role: "system", content: "Return only valid JSON." },
+                { role: "user", content: '{"ok": true, "message": "Mistral connection test"}' },
+            ],
+            temperature: 0,
+            response_format: { type: "json_object" },
+        }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || payload.error?.message || `Mistral test failed (${response.status})`);
+    return { ok: true, source: "browser fallback", model };
+}
+
 function isFilterableReview(review) {
     return asNumber(review.rating) !== null && !Number.isNaN(parseReviewDate(review.review_date_iso || review.review_date || review.created_at).getTime());
 }
@@ -1306,6 +1341,9 @@ function buildCategoryRows(reviews) {
             const [saved, setSaved] = useState(false);
             const [showKey, setShowKey] = useState(false);
             const [runResult, setRunResult] = useState("");
+            const [testRunning, setTestRunning] = useState(false);
+            const [testResult, setTestResult] = useState("");
+            const [testError, setTestError] = useState("");
             const maskedKey = settings.apiKey ? `${settings.apiKey.slice(0, 10)}${"•".repeat(Math.max(0, Math.min(18, settings.apiKey.length - 10)))}` : "No key saved";
             const command = [
                 '$env:SUPABASE_URL="https://xxxx.supabase.co"',
@@ -1333,6 +1371,20 @@ function buildCategoryRows(reviews) {
                     setRunResult(`${payload.analyzed} reviews analyzed with ${payload.model} via ${sourceLabel}. ${persistenceLabel}`);
                 } catch (err) {
                     setRunResult("");
+                }
+            };
+            const startConnectionTest = async () => {
+                saveSettings();
+                setTestRunning(true);
+                setTestResult("");
+                setTestError("");
+                try {
+                    const payload = await testMistralConnection(settings);
+                    setTestResult(`Connection OK via ${payload.source} using ${payload.model}.`);
+                } catch (err) {
+                    setTestError(err.message || String(err));
+                } finally {
+                    setTestRunning(false);
                 }
             };
             const resetSettings = () => {
@@ -1417,11 +1469,20 @@ function buildCategoryRows(reviews) {
 
                                         <div className="flex flex-wrap gap-3 pt-2">
                                             <button type="button" onClick={saveSettings} className="px-6 py-3 bg-secondary text-on-secondary rounded-xl font-label-md shadow-sm hover:bg-secondary-container transition-all">Save settings</button>
+                                            <button type="button" onClick={startConnectionTest} disabled={testRunning || aiRunning} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all disabled:opacity-60 disabled:cursor-not-allowed">
+                                                {testRunning ? "Testing..." : "Test connection"}
+                                            </button>
                                             <button type="button" onClick={startAnalysis} disabled={aiRunning} className="px-6 py-3 bg-primary text-on-primary rounded-xl font-label-md shadow-sm hover:bg-secondary transition-all disabled:opacity-60 disabled:cursor-not-allowed">
                                                 {aiRunning ? "Running analysis..." : "Run Mistral analysis"}
                                             </button>
                                             <button type="button" onClick={resetSettings} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all">Reset</button>
                                         </div>
+                                        {(testResult || testError) && (
+                                            <div className={`rounded-xl p-4 border ${testError ? "bg-error-container/20 border-error-container text-error" : "bg-secondary/10 border-secondary/20 text-secondary"}`}>
+                                                <p className="font-bold text-label-md">{testError ? "Connection failed" : "Connection verified"}</p>
+                                                <p className="text-body-sm mt-1">{testError || testResult}</p>
+                                            </div>
+                                        )}
                                         {(runResult || aiError || aiLastRun) && (
                                             <div className={`rounded-xl p-4 border ${aiError ? "bg-error-container/20 border-error-container text-error" : "bg-tertiary-fixed/20 border-tertiary-fixed/40 text-on-tertiary-container"}`}>
                                                 <p className="font-bold text-label-md">{aiError ? "Analysis failed" : "Analysis ready"}</p>

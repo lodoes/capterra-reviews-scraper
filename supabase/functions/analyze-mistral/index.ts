@@ -110,10 +110,6 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!supabaseUrl || !serviceKey) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY secret.");
-
     const body = await request.json().catch(() => ({}));
     const productSlug = String(body.productSlug || "spendesk");
     const limit = Math.min(Math.max(Number(body.limit) || 240, 25), 500);
@@ -121,6 +117,18 @@ Deno.serve(async (request) => {
     const prompt = String(body.prompt || DEFAULT_PROMPT);
     const mistralApiKey = String(body.mistralApiKey || Deno.env.get("MISTRAL_API_KEY") || "").trim();
     if (!mistralApiKey) throw new Error("Missing Mistral API key. Send one from Settings or configure MISTRAL_API_KEY as a Supabase secret.");
+
+    if (body.action === "test") {
+      const testInsights = await callMistral(mistralApiKey, model, [
+        { role: "system", content: "Return only valid JSON." },
+        { role: "user", content: '{"ok": true, "message": "Mistral connection test"}' },
+      ]);
+      return jsonResponse({ ok: true, model, test: testInsights });
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceKey) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY secret.");
 
     const reviews = await fetchReviews(supabaseUrl, serviceKey, productSlug, limit);
     if (!reviews.length) throw new Error(`No reviews found for product_slug=${productSlug}.`);
