@@ -7,6 +7,7 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const TABLE = import.meta.env.VITE_SUPABASE_TABLE || "capterra_reviews";
 const INSIGHTS_TABLE = import.meta.env.VITE_SUPABASE_INSIGHTS_TABLE || "capterra_review_insights";
 const PAGE_SIZE = 1000;
+const SEEN_REVIEWS_KEY = "spendesk_seen_review_fingerprints";
 const InsightsContext = createContext(null);
 
 function asNumber(value) {
@@ -18,6 +19,12 @@ function formatDate(value) {
     const parsed = parseReviewDate(value);
     if (Number.isNaN(parsed.getTime())) return value;
     return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" });
+}
+
+function formatDateTime(value) {
+    const parsed = parseReviewDate(value);
+    if (Number.isNaN(parsed.getTime())) return "Not synced yet";
+    return parsed.toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function parseReviewDate(value) {
@@ -44,6 +51,44 @@ function reviewText(review) {
     const data = review.data || {};
     return [review.title, review.reviewer, data.summary, data.pros, data.cons, data.reviewer_role, data.reviewer_industry]
         .filter(Boolean).join(" ").toLowerCase();
+}
+
+function reviewId(review) {
+    return review.fingerprint || `${review.source_url || ""}-${review.reviewer || ""}-${review.title || ""}-${review.review_date || ""}`;
+}
+
+function readSeenReviewIds() {
+    try {
+        return new Set(JSON.parse(window.localStorage.getItem(SEEN_REVIEWS_KEY) || "[]"));
+    } catch {
+        return new Set();
+    }
+}
+
+function writeSeenReviewIds(reviews) {
+    try {
+        window.localStorage.setItem(SEEN_REVIEWS_KEY, JSON.stringify(reviews.map(reviewId).filter(Boolean)));
+    } catch {
+        // localStorage can be blocked in private or embedded browsers.
+    }
+}
+
+function detectNewReviews(reviews) {
+    if (typeof window === "undefined") return [];
+    try {
+        const existingValue = window.localStorage.getItem(SEEN_REVIEWS_KEY);
+        if (!existingValue) {
+            writeSeenReviewIds(reviews);
+            return [];
+        }
+    } catch {
+        return [];
+    }
+    const seen = readSeenReviewIds();
+    return reviews.filter((review) => {
+        const id = reviewId(review);
+        return id && !seen.has(id);
+    }).slice(0, 10);
 }
 
 function isFilterableReview(review) {
@@ -291,6 +336,7 @@ function aiCategoryRows(items) {
 function InsightsProvider({ children }) {
     const [reviews, setReviews] = useState([]);
     const [aiInsights, setAiInsights] = useState(null);
+    const [newReviews, setNewReviews] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [query, setQuery] = useState("");
@@ -299,13 +345,26 @@ function InsightsProvider({ children }) {
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
     useEffect(() => {
-        Promise.all([fetchAllReviews(), fetchAiInsights()])
+        let mounted = true;
+        const refreshDashboardData = () => Promise.all([fetchAllReviews(), fetchAiInsights()])
             .then(([reviewRows, insightRows]) => {
+                if (!mounted) return;
                 setReviews(reviewRows);
                 setAiInsights(insightRows);
+                setNewReviews(detectNewReviews(reviewRows));
             })
-            .catch((err) => setError(err.message || String(err)))
-            .finally(() => setLoading(false));
+            .catch((err) => {
+                if (mounted) setError(err.message || String(err));
+            })
+            .finally(() => {
+                if (mounted) setLoading(false);
+            });
+        refreshDashboardData();
+        const interval = window.setInterval(refreshDashboardData, 60000);
+        return () => {
+            mounted = false;
+            window.clearInterval(interval);
+        };
     }, []);
     const value = useMemo(() => {
         const datedReviews = reviews
@@ -345,6 +404,10 @@ function InsightsProvider({ children }) {
         const negativePct = reviews.length ? Math.round((negative / reviews.length) * 100) : 0;
         const scopedPositivePct = filteredReviews.length ? Math.round((scopedPositive / filteredReviews.length) * 100) : 0;
         const scopedNegativePct = filteredReviews.length ? Math.round((scopedNegative / filteredReviews.length) * 100) : 0;
+        const scrapeDates = reviews
+            .map((review) => parseReviewDate(review.scraped_at || review.created_at))
+            .filter((date) => !Number.isNaN(date.getTime()));
+        const latestScrapeAt = scrapeDates.length ? new Date(Math.max(...scrapeDates.map((date) => date.getTime()))) : null;
         const keywords = !filtersActive && aiInsights ? (aiKeywords(aiInsights.keywords).length ? aiKeywords(aiInsights.keywords) : getKeywords(filteredReviews)) : getKeywords(filteredReviews);
         const fallbackPros = [
             { icon: "speed", title: "User Interface Speed", desc: "Users consistently praise the responsiveness and fast loading times of the dashboards." },
@@ -361,6 +424,11 @@ function InsightsProvider({ children }) {
             filteredReviews,
             loading,
             error,
+            newReviews,
+            markNotificationsSeen: () => {
+                writeSeenReviewIds(reviews);
+                setNewReviews([]);
+            },
             query,
             setQuery,
             ratingFilter,
@@ -405,9 +473,11 @@ function InsightsProvider({ children }) {
                 scopedPositivePctLabel: `${scopedPositivePct}%`,
                 scopedNegativePctLabel: `${scopedNegativePct}%`,
                 statusLabel: loading ? "Loading" : "Live Sync",
+                latestScrapeAt,
+                latestScrapeLabel: formatDateTime(latestScrapeAt),
             },
         };
-    }, [reviews, aiInsights, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
+    }, [reviews, aiInsights, newReviews, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
     return <InsightsContext.Provider value={value}>{children}</InsightsContext.Provider>;
 }
 
@@ -514,7 +584,9 @@ function buildCategoryRows(reviews) {
 };
 
         const TopBar = ({ title = "Search insights..." }) => {
-            const { query, setQuery } = useInsights();
+            const { query, setQuery, newReviews, markNotificationsSeen } = useInsights();
+            const [open, setOpen] = useState(false);
+            const notificationCards = newReviews.map((review, idx) => reviewToCard(review, idx));
             return (
                 <header className="fixed top-0 right-0 left-64 h-20 z-40 bg-surface/80 backdrop-blur-md flex justify-between items-center px-lg">
                     <div className="flex items-center flex-1 max-w-xl">
@@ -524,10 +596,59 @@ function buildCategoryRows(reviews) {
                         </div>
                     </div>
                     <div className="flex items-center gap-6">
-                        <button className="relative w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low hover:text-primary transition-all">
-                            <span className="material-symbols-outlined">notifications</span>
-                            <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full border-2 border-surface"></span>
-                        </button>
+                        <div className="relative">
+                            <button
+                                type="button"
+                                onClick={() => setOpen((current) => !current)}
+                                className="relative w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low hover:text-primary transition-all"
+                                aria-label="Open notifications"
+                            >
+                                <span className="material-symbols-outlined" style={{fontVariationSettings: newReviews.length ? "'FILL' 1" : ""}}>notifications</span>
+                                {newReviews.length > 0 && (
+                                    <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-error text-white text-[10px] font-extrabold rounded-full border-2 border-surface flex items-center justify-center">
+                                        {newReviews.length}
+                                    </span>
+                                )}
+                            </button>
+                            {open && (
+                                <div className="absolute right-0 top-12 w-96 max-w-[calc(100vw-2rem)] bg-surface-container-lowest border border-outline-variant/40 rounded-2xl shadow-xl p-4 z-50">
+                                    <div className="flex items-start justify-between gap-4 mb-4">
+                                        <div>
+                                            <p className="font-extrabold text-primary text-body-lg">Notifications</p>
+                                            <p className="text-label-sm text-on-surface-variant">
+                                                {newReviews.length ? `${newReviews.length} new review${newReviews.length > 1 ? "s" : ""} detected` : "Nothing new for now"}
+                                            </p>
+                                        </div>
+                                        {newReviews.length > 0 && (
+                                            <button type="button" onClick={markNotificationsSeen} className="text-label-sm font-bold text-secondary hover:text-primary transition-colors">Mark read</button>
+                                        )}
+                                    </div>
+                                    {notificationCards.length ? (
+                                        <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                                            {notificationCards.map((review, idx) => (
+                                                <div key={idx} className="rounded-xl bg-surface-container-low p-4 border border-outline-variant/20">
+                                                    <div className="flex items-center justify-between gap-3 mb-2">
+                                                        <p className="font-bold text-primary text-label-md truncate">{review.name}</p>
+                                                        <span className="text-[10px] font-extrabold text-on-tertiary-container bg-tertiary-fixed-dim/30 px-2 py-1 rounded-full uppercase">{review.sentiment}</span>
+                                                    </div>
+                                                    <p className="text-body-sm text-on-surface-variant line-clamp-2">{review.verdict}</p>
+                                                    <div className="mt-3 flex items-center justify-between text-[11px] text-on-surface-variant">
+                                                        <span>{review.date}</span>
+                                                        <span className="text-secondary font-bold">{review.rating}/5</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-xl bg-surface-container-low p-6 text-center border border-outline-variant/20">
+                                            <span className="material-symbols-outlined text-3xl text-secondary mb-2">notifications_paused</span>
+                                            <p className="font-bold text-primary">No new reviews</p>
+                                            <p className="text-label-sm text-on-surface-variant mt-1">The latest scrape is already reflected in the dashboard.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                         <div className="flex items-center gap-3 bg-surface-container-low hover:bg-surface-container-high p-1.5 pr-4 rounded-full transition-all cursor-pointer group">
                             <img className="w-10 h-10 rounded-full border-2 border-surface-container-high object-cover shadow-sm" src="/lotfi-profile.jpg"/>
                             <div className="hidden lg:block text-left ml-2">
@@ -618,6 +739,7 @@ function buildCategoryRows(reviews) {
                                         </div>
                                         <div className="text-headline-md font-extrabold mb-1">{analytics.statusLabel}</div>
                                         <p className="text-secondary-fixed/80 text-label-sm font-medium">{analytics.filteredLabel} matching / {analytics.totalLabel} loaded</p>
+                                        <p className="text-secondary-fixed/70 text-[11px] font-bold mt-3 uppercase tracking-wider">Last scrape: {analytics.latestScrapeLabel}</p>
                                     </div>
                                     <div className="absolute right-[-20px] bottom-[-20px] opacity-10 rotate-12">
                                         <span className="material-symbols-outlined text-[160px]">hub</span>
@@ -895,6 +1017,7 @@ function buildCategoryRows(reviews) {
                                         <span className="text-[40px] font-extrabold text-primary leading-none">{analytics.totalLabel}</span>
                                         <span className="text-label-md font-bold text-on-surface-variant opacity-70">Total</span>
                                     </div>
+                                    <p className="text-[11px] text-on-surface-variant font-bold mt-3 uppercase tracking-wider">Last scrape: {analytics.latestScrapeLabel}</p>
                                 </div>
                             </div>
                         </aside>
