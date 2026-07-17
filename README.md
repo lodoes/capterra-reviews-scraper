@@ -120,6 +120,34 @@ python analyze_reviews_mistral.py --product-slug spendesk
 
 Le script regroupe les avis par champs lexicaux coherents : pros, cons, keywords propres, et performance categorisee avec une ligne `Overall Experience`.
 
+### Depuis l'interface Settings
+
+Le dashboard contient une page **Settings** avec un bouton `Run Mistral analysis`.
+
+Pour que ce bouton fonctionne, deploie la Supabase Edge Function :
+
+```powershell
+supabase functions deploy analyze-mistral
+```
+
+Puis configure au minimum le secret Supabase qui permet a la function d'ecrire les insights :
+
+```powershell
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY="..."
+```
+
+Deux options sont possibles pour Mistral :
+
+1. Test rapide : colle ta cle Mistral dans Settings. Elle reste dans le navigateur et est envoyee a la function au moment du clic.
+2. Mode plus propre : configure la cle cote Supabase et laisse le champ API key vide dans Settings.
+
+```powershell
+supabase secrets set MISTRAL_API_KEY="..."
+supabase secrets set MISTRAL_MODEL="mistral-small-latest"
+```
+
+Le front appelle `${VITE_SUPABASE_URL}/functions/v1/analyze-mistral`, la function lit les reviews, appelle Mistral, puis upsert le resultat dans `capterra_review_insights`.
+
 ## Google Cloud Run Jobs
 
 Pour Google Cloud, utilise **Cloud Run Jobs**, pas un Cloud Run Service.

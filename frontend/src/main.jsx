@@ -111,6 +111,28 @@ function writeMistralSettings(settings) {
     window.localStorage.setItem(MISTRAL_SETTINGS_KEY, JSON.stringify(settings));
 }
 
+async function runMistralAnalysis(settings) {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Supabase is not configured in the frontend environment.");
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/analyze-mistral`, {
+        method: "POST",
+        headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            productSlug: "spendesk",
+            limit: 240,
+            model: settings.model || DEFAULT_MISTRAL_SETTINGS.model,
+            prompt: settings.prompt || DEFAULT_MISTRAL_SETTINGS.prompt,
+            mistralApiKey: settings.apiKey || undefined,
+        }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `Mistral analysis failed (${response.status})`);
+    return payload;
+}
+
 function isFilterableReview(review) {
     return asNumber(review.rating) !== null && !Number.isNaN(parseReviewDate(review.review_date_iso || review.review_date || review.created_at).getTime());
 }
@@ -356,6 +378,9 @@ function aiCategoryRows(items) {
 function InsightsProvider({ children }) {
     const [reviews, setReviews] = useState([]);
     const [aiInsights, setAiInsights] = useState(null);
+    const [aiRunning, setAiRunning] = useState(false);
+    const [aiError, setAiError] = useState("");
+    const [aiLastRun, setAiLastRun] = useState(null);
     const [newReviews, setNewReviews] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -445,6 +470,25 @@ function InsightsProvider({ children }) {
             loading,
             error,
             newReviews,
+            aiRunning,
+            aiError,
+            aiLastRun,
+            runAiAnalysis: async (settings) => {
+                setAiRunning(true);
+                setAiError("");
+                try {
+                    const payload = await runMistralAnalysis(settings);
+                    setAiInsights(payload.insights || null);
+                    setAiLastRun({ analyzed: payload.analyzed, model: payload.model, at: new Date() });
+                    return payload;
+                } catch (err) {
+                    const message = err.message || String(err);
+                    setAiError(message);
+                    throw err;
+                } finally {
+                    setAiRunning(false);
+                }
+            },
             markNotificationsSeen: () => {
                 writeSeenReviewIds(reviews);
                 setNewReviews([]);
@@ -497,7 +541,7 @@ function InsightsProvider({ children }) {
                 latestScrapeLabel: formatDateTime(latestScrapeAt),
             },
         };
-    }, [reviews, aiInsights, newReviews, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
+    }, [reviews, aiInsights, aiRunning, aiError, aiLastRun, newReviews, loading, error, query, ratingFilter, sentimentFilter, dateFrom, dateTo]);
     return <InsightsContext.Provider value={value}>{children}</InsightsContext.Provider>;
 }
 
@@ -1167,9 +1211,11 @@ function buildCategoryRows(reviews) {
         };
 
         const SettingsPage = () => {
+            const { aiRunning, aiError, aiLastRun, runAiAnalysis } = useInsights();
             const [settings, setSettings] = useState(readMistralSettings);
             const [saved, setSaved] = useState(false);
             const [showKey, setShowKey] = useState(false);
+            const [runResult, setRunResult] = useState("");
             const maskedKey = settings.apiKey ? `${settings.apiKey.slice(0, 10)}${"•".repeat(Math.max(0, Math.min(18, settings.apiKey.length - 10)))}` : "No key saved";
             const command = [
                 '$env:SUPABASE_URL="https://xxxx.supabase.co"',
@@ -1186,6 +1232,16 @@ function buildCategoryRows(reviews) {
             const saveSettings = () => {
                 writeMistralSettings(settings);
                 setSaved(true);
+            };
+            const startAnalysis = async () => {
+                saveSettings();
+                setRunResult("");
+                try {
+                    const payload = await runAiAnalysis(settings);
+                    setRunResult(`${payload.analyzed} reviews analyzed with ${payload.model}. Insights saved to Supabase.`);
+                } catch (err) {
+                    setRunResult("");
+                }
             };
             const resetSettings = () => {
                 setSettings(DEFAULT_MISTRAL_SETTINGS);
@@ -1269,8 +1325,19 @@ function buildCategoryRows(reviews) {
 
                                         <div className="flex flex-wrap gap-3 pt-2">
                                             <button type="button" onClick={saveSettings} className="px-6 py-3 bg-secondary text-on-secondary rounded-xl font-label-md shadow-sm hover:bg-secondary-container transition-all">Save settings</button>
+                                            <button type="button" onClick={startAnalysis} disabled={aiRunning} className="px-6 py-3 bg-primary text-on-primary rounded-xl font-label-md shadow-sm hover:bg-secondary transition-all disabled:opacity-60 disabled:cursor-not-allowed">
+                                                {aiRunning ? "Running analysis..." : "Run Mistral analysis"}
+                                            </button>
                                             <button type="button" onClick={resetSettings} className="px-6 py-3 bg-surface-container-low text-primary rounded-xl font-label-md hover:bg-surface-container transition-all">Reset</button>
                                         </div>
+                                        {(runResult || aiError || aiLastRun) && (
+                                            <div className={`rounded-xl p-4 border ${aiError ? "bg-error-container/20 border-error-container text-error" : "bg-tertiary-fixed/20 border-tertiary-fixed/40 text-on-tertiary-container"}`}>
+                                                <p className="font-bold text-label-md">{aiError ? "Analysis failed" : "Analysis ready"}</p>
+                                                <p className="text-body-sm mt-1">
+                                                    {aiError || runResult || `${aiLastRun?.analyzed || 0} reviews analyzed with ${aiLastRun?.model || settings.model}.`}
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                 </section>
 
