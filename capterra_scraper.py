@@ -39,7 +39,7 @@ import sys
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -169,7 +169,18 @@ def _coerce_image_url(value):
     if "," in raw:
         candidates = [part.strip().split()[0] for part in raw.split(",") if part.strip()]
         raw = candidates[-1] if candidates else ""
-    return urljoin(DEFAULT_URL, raw) if raw else ""
+    if not raw:
+        return ""
+
+    absolute_url = urljoin(DEFAULT_URL, raw)
+    if re.search(r"(?:/ProductLogo/|product[-_/]?logo)", absolute_url, re.I):
+        return ""
+    parsed = urlparse(absolute_url)
+    if parsed.path.endswith("/_next/image"):
+        direct_url = parse_qs(parsed.query).get("url", [""])[0]
+        if direct_url and direct_url != absolute_url:
+            return _coerce_image_url(direct_url)
+    return absolute_url
 
 
 def parse_next_data(soup):
@@ -325,7 +336,7 @@ def _reviewer_avatar_url(card, name_el, name):
 
         if candidates:
             best_score, best_url = max(candidates, key=lambda candidate: candidate[0])
-            if best_score > 0 or (len(candidates) == 1 and current is not card):
+            if best_score > 0 or (best_score == 0 and len(candidates) == 1 and current is not card):
                 return best_url
         if current is card:
             break

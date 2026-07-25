@@ -773,6 +773,21 @@ function useInsights() {
     return useContext(InsightsContext);
 }
 
+function directImageUrl(value) {
+    if (!value) return "";
+    try {
+        const url = new URL(value);
+        if (/(?:\/ProductLogo\/|product[-_/]?logo)/i.test(url.href)) return "";
+        if (url.pathname.endsWith("/_next/image")) {
+            const directUrl = url.searchParams.get("url") || value;
+            return /(?:\/ProductLogo\/|product[-_/]?logo)/i.test(directUrl) ? "" : directUrl;
+        }
+    } catch {
+        return value;
+    }
+    return value;
+}
+
 function reviewToCard(review, idx) {
     const data = review.data || {};
     const reviewerInfo = [data.reviewer_role, data.reviewer_industry].filter(Boolean).join(" • ") || "Capterra reviewer";
@@ -783,7 +798,7 @@ function reviewToCard(review, idx) {
         role: reviewerInfo,
         usedSoftwareFor,
         date: formatDate(review.review_date_iso || review.review_date),
-        img: data.reviewer_avatar_url || review.reviewer_avatar_url || fallbackImg,
+        img: directImageUrl(data.reviewer_avatar_url || review.reviewer_avatar_url) || fallbackImg,
         fallbackImg,
         rating: Math.round(asNumber(review.rating) || 0),
         sentiment: sentimentForRating(review.rating),
