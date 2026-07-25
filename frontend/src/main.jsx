@@ -775,9 +775,12 @@ function useInsights() {
 
 function reviewToCard(review, idx) {
     const data = review.data || {};
+    const reviewerInfo = [data.reviewer_role, data.reviewer_industry].filter(Boolean).join(" • ") || "Capterra reviewer";
+    const usedSoftwareFor = data.used_software_for || (data.reviewer_info || "").split("|").map((part) => part.trim()).find((part) => /\b(\d+\+?\s*years?|less than|months?)\b/i.test(part)) || "";
     return {
         name: review.reviewer || "Verified Reviewer",
-        role: data.reviewer_role || data.reviewer_industry || "Capterra reviewer",
+        role: reviewerInfo,
+        usedSoftwareFor,
         date: formatDate(review.review_date_iso || review.review_date),
         img: `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(review.reviewer || `review-${idx}`)}`,
         rating: Math.round(asNumber(review.rating) || 0),
@@ -1205,8 +1208,14 @@ function buildCategoryRows(reviews) {
                                                     <img className="w-14 h-14 rounded-full object-cover ring-4 ring-surface-container-low" src={review.img}/>
                                                     <div>
                                                         <h3 className="font-bold text-primary text-body-lg">{review.name}</h3>
-                                                        <div className="flex items-center gap-2 text-on-surface-variant font-label-md">
+                                                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-on-surface-variant font-label-md">
                                                             <span>{review.role}</span>
+                                                            {review.usedSoftwareFor && (
+                                                                <>
+                                                                    <span className="text-outline-variant opacity-50">•</span>
+                                                                    <span>Used for {review.usedSoftwareFor}</span>
+                                                                </>
+                                                            )}
                                                             <span className="text-outline-variant opacity-50">•</span>
                                                             <time className="opacity-70">{review.date}</time>
                                                         </div>

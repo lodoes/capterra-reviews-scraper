@@ -275,9 +275,17 @@ def _reviewer_details(card):
 
     used_for = ""
     clean_details = []
-    for line in detail_lines:
-        if line.lower().startswith("used the software for:"):
+    skip_next = False
+    for i, line in enumerate(detail_lines):
+        if skip_next:
+            skip_next = False
+            continue
+        lower = line.lower()
+        if lower.startswith("used the software for:"):
             used_for = line.split(":", 1)[1].strip()
+            if not used_for and i + 1 < len(detail_lines):
+                used_for = detail_lines[i + 1].strip()
+                skip_next = True
         else:
             clean_details.append(line)
 
