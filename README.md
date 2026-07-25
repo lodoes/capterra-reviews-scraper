@@ -23,6 +23,7 @@ Les reviews sont ensuite stockees dans Supabase, puis consommees par un dashboar
 Le scraper recupere notamment :
 
 - reviewer
+- photo publique du reviewer quand elle est disponible
 - date de review + date ISO exploitable
 - titre et summary
 - rating global

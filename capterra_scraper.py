@@ -39,6 +39,7 @@ import sys
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
@@ -149,6 +150,28 @@ def _flatten(d, prefix=""):
     return out
 
 
+def _coerce_image_url(value):
+    if isinstance(value, dict):
+        for key in ("url", "contentUrl", "src", "imageUrl"):
+            if value.get(key):
+                return _coerce_image_url(value[key])
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            url = _coerce_image_url(item)
+            if url:
+                return url
+        return ""
+
+    raw = str(value or "").strip()
+    if not raw or raw.startswith(("data:", "blob:", "javascript:")):
+        return ""
+    if "," in raw:
+        candidates = [part.strip().split()[0] for part in raw.split(",") if part.strip()]
+        raw = candidates[-1] if candidates else ""
+    return urljoin(DEFAULT_URL, raw) if raw else ""
+
+
 def parse_next_data(soup):
     tag = soup.find("script", id="__NEXT_DATA__")
     if not tag or not tag.string:
@@ -192,6 +215,9 @@ def parse_json_ld(soup):
                 rating = rev.get("reviewRating", {})
                 reviews.append({
                     "reviewer": author.get("name", "") if isinstance(author, dict) else str(author),
+                    "reviewer_avatar_url": _coerce_image_url(
+                        (author.get("image") or author.get("photo")) if isinstance(author, dict) else ""
+                    ),
                     "title": rev.get("name", ""),
                     "date": rev.get("datePublished", ""),
                     "rating": rating.get("ratingValue", "") if isinstance(rating, dict) else "",
@@ -260,6 +286,53 @@ def _rating_from_testid(card, testid):
     return _first_number(node.get_text(" ", strip=True)) if node else ""
 
 
+def _image_element_url(img):
+    for attr in ("data-srcset", "srcset", "data-src", "data-lazy-src", "src"):
+        url = _coerce_image_url(img.get(attr))
+        if url:
+            return url
+    return ""
+
+
+def _reviewer_avatar_url(card, name_el, name):
+    if not name_el:
+        return ""
+
+    current = name_el.parent
+    for _ in range(5):
+        if current is None:
+            break
+
+        candidates = []
+        for img in current.find_all("img"):
+            url = _image_element_url(img)
+            if not url:
+                continue
+            metadata = " ".join([
+                str(img.get("alt", "")),
+                str(img.get("class", "")),
+                str(img.get("data-testid", "")),
+                url,
+            ]).lower()
+            score = 0
+            if name and name.lower() in metadata:
+                score += 10
+            if any(token in metadata for token in ("avatar", "profile", "reviewer", "author", "user")):
+                score += 5
+            if any(token in metadata for token in ("logo", "star", "icon", "badge", "product")):
+                score -= 10
+            candidates.append((score, url))
+
+        if candidates:
+            best_score, best_url = max(candidates, key=lambda candidate: candidate[0])
+            if best_score > 0 or (len(candidates) == 1 and current is not card):
+                return best_url
+        if current is card:
+            break
+        current = current.parent
+    return ""
+
+
 def _reviewer_details(card):
     title_el = card.find(["h3", "h4"])
     search_root = title_el.find_previous() if title_el else card
@@ -291,6 +364,7 @@ def _reviewer_details(card):
 
     return {
         "reviewer": name,
+        "reviewer_avatar_url": _reviewer_avatar_url(card, name_el, name),
         "reviewer_role": clean_details[0] if len(clean_details) > 0 else "",
         "reviewer_industry": clean_details[1] if len(clean_details) > 1 else "",
         "used_software_for": used_for,
@@ -529,6 +603,22 @@ def _canonicalize_review(review):
         review["pros"] = _first_present(review, ["pros", "prosText"])
     if not review.get("cons"):
         review["cons"] = _first_present(review, ["cons", "consText"])
+    if not review.get("reviewer_avatar_url"):
+        review["reviewer_avatar_url"] = _first_present(review, [
+            "reviewerAvatarUrl",
+            "reviewer.avatarUrl",
+            "reviewer.profileImageUrl",
+            "reviewer.profilePictureUrl",
+            "reviewer.imageUrl",
+            "reviewer.image.url",
+            "author.image.url",
+            "author.image",
+            "author.photo",
+            "profileImageUrl",
+            "profilePictureUrl",
+            "avatarUrl",
+        ])
+    review["reviewer_avatar_url"] = _coerce_image_url(review.get("reviewer_avatar_url"))
     return review
 
 
@@ -585,7 +675,7 @@ def _normalize_for_fingerprint(value):
         return {
             str(k): _normalize_for_fingerprint(v)
             for k, v in sorted(value.items())
-            if not str(k).startswith("_")
+            if not str(k).startswith("_") and str(k) != "reviewer_avatar_url"
         }
     if isinstance(value, list):
         return [_normalize_for_fingerprint(v) for v in value]

@@ -777,12 +777,14 @@ function reviewToCard(review, idx) {
     const data = review.data || {};
     const reviewerInfo = [data.reviewer_role, data.reviewer_industry].filter(Boolean).join(" • ") || "Capterra reviewer";
     const usedSoftwareFor = data.used_software_for || (data.reviewer_info || "").split("|").map((part) => part.trim()).find((part) => /\b(\d+\+?\s*years?|less than|months?)\b/i.test(part)) || "";
+    const fallbackImg = `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(review.reviewer || `review-${idx}`)}`;
     return {
         name: review.reviewer || "Verified Reviewer",
         role: reviewerInfo,
         usedSoftwareFor,
         date: formatDate(review.review_date_iso || review.review_date),
-        img: `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(review.reviewer || `review-${idx}`)}`,
+        img: data.reviewer_avatar_url || review.reviewer_avatar_url || fallbackImg,
+        fallbackImg,
         rating: Math.round(asNumber(review.rating) || 0),
         sentiment: sentimentForRating(review.rating),
         verdict: data.summary || review.title || "No summary extracted for this review.",
@@ -1205,7 +1207,18 @@ function buildCategoryRows(reviews) {
                                         <article key={idx} className="bg-surface-container-lowest border border-outline-variant/20 rounded-lg p-8 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
                                             <div className="flex items-start justify-between mb-6">
                                                 <div className="flex items-center gap-5">
-                                                    <img className="w-14 h-14 rounded-full object-cover ring-4 ring-surface-container-low" src={review.img}/>
+                                                    <img
+                                                        className="w-14 h-14 rounded-full object-cover ring-4 ring-surface-container-low"
+                                                        src={review.img}
+                                                        alt={`Profile photo of ${review.name}`}
+                                                        loading="lazy"
+                                                        referrerPolicy="no-referrer"
+                                                        onError={(event) => {
+                                                            if (event.currentTarget.dataset.fallbackApplied === "true") return;
+                                                            event.currentTarget.dataset.fallbackApplied = "true";
+                                                            event.currentTarget.src = review.fallbackImg;
+                                                        }}
+                                                    />
                                                     <div>
                                                         <h3 className="font-bold text-primary text-body-lg">{review.name}</h3>
                                                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-on-surface-variant font-label-md">
