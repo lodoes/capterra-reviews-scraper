@@ -788,6 +788,11 @@ function directImageUrl(value) {
     return value;
 }
 
+function reviewerPhotoUrl(review) {
+    const data = review.data || {};
+    return directImageUrl(data.reviewer_avatar_url || review.reviewer_avatar_url);
+}
+
 function reviewToCard(review, idx) {
     const data = review.data || {};
     const reviewerInfo = [data.reviewer_role, data.reviewer_industry].filter(Boolean).join(" • ") || "Capterra reviewer";
@@ -798,7 +803,7 @@ function reviewToCard(review, idx) {
         role: reviewerInfo,
         usedSoftwareFor,
         date: formatDate(review.review_date_iso || review.review_date),
-        img: directImageUrl(data.reviewer_avatar_url || review.reviewer_avatar_url) || fallbackImg,
+        img: reviewerPhotoUrl(review) || fallbackImg,
         fallbackImg,
         rating: Math.round(asNumber(review.rating) || 0),
         sentiment: sentimentForRating(review.rating),
@@ -1170,6 +1175,7 @@ function buildCategoryRows(reviews) {
 
         const ReviewsPage = () => {
             const [sortMode, setSortMode] = useState("newest");
+            const [photosOnly, setPhotosOnly] = useState(false);
             const {
                 reviews,
                 filteredReviews,
@@ -1186,7 +1192,9 @@ function buildCategoryRows(reviews) {
                 minDate,
                 maxDate,
             } = useInsights();
-            const sortedReviews = [...filteredReviews].sort((a, b) => {
+            const reviewsWithPhoto = filteredReviews.filter((review) => Boolean(reviewerPhotoUrl(review)));
+            const displayedReviews = photosOnly ? reviewsWithPhoto : filteredReviews;
+            const sortedReviews = [...displayedReviews].sort((a, b) => {
                 const dateA = parseReviewDate(a.review_date_iso || a.review_date || a.created_at).getTime();
                 const dateB = parseReviewDate(b.review_date_iso || b.review_date || b.created_at).getTime();
                 const ratingA = asNumber(a.rating) || 0;
@@ -1281,7 +1289,7 @@ function buildCategoryRows(reviews) {
                                 </div>
                                 <div className="flex justify-center py-12">
                                     <button className="px-10 py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg hover:bg-secondary hover:scale-105 active:scale-95 transition-all">
-                                        {loading ? "Loading Reviews" : `${cards.length} shown / ${analytics.filteredLabel} matching`}
+                                        {loading ? "Loading Reviews" : `${cards.length} shown / ${displayedReviews.length} matching`}
                                     </button>
                                 </div>
                             </div>
@@ -1316,6 +1324,27 @@ function buildCategoryRows(reviews) {
                                             </button>
                                         ))}
                                     </div>
+                                </div>
+                                <div className="space-y-4">
+                                    <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Reviewer Profile</label>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={photosOnly}
+                                        onClick={() => setPhotosOnly((enabled) => !enabled)}
+                                        className={`w-full flex items-center justify-between gap-4 border rounded-lg px-4 py-3 text-left transition-all ${photosOnly ? "bg-secondary/10 border-secondary/30 text-secondary shadow-sm" : "bg-surface-container-low border-transparent text-on-surface-variant hover:bg-surface-container"}`}
+                                    >
+                                        <span className="flex min-w-0 items-center gap-3">
+                                            <span className="material-symbols-outlined text-[20px]">account_circle</span>
+                                            <span className="min-w-0">
+                                                <span className="block text-label-md font-bold">With photo</span>
+                                                <span className="block text-[11px] font-semibold opacity-70">{reviewsWithPhoto.length} matching</span>
+                                            </span>
+                                        </span>
+                                        <span className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${photosOnly ? "bg-secondary" : "bg-outline-variant"}`}>
+                                            <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${photosOnly ? "translate-x-6" : "translate-x-1"}`}></span>
+                                        </span>
+                                    </button>
                                 </div>
                                 <div className="space-y-4">
                                     <label className="font-label-sm text-on-surface-variant uppercase tracking-[0.15em] text-[10px] font-extrabold opacity-60">Filter by Rating</label>
@@ -1373,7 +1402,7 @@ function buildCategoryRows(reviews) {
                                     </div>
                                 </div>
                                 <div className="pt-8 space-y-3">
-                                    <button className="w-full py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg active:scale-95 hover:bg-secondary transition-all">{analytics.filteredLabel} MATCHING REVIEWS</button>
+                                    <button className="w-full py-4 bg-primary text-on-primary font-extrabold rounded-lg shadow-lg active:scale-95 hover:bg-secondary transition-all">{displayedReviews.length} MATCHING REVIEWS</button>
                                     <p className="text-[11px] text-on-surface-variant leading-relaxed">
                                         {analytics.totalLabel} rows loaded. {analytics.filterableLabel} are fully filterable by rating/date; {analytics.unfilterable} miss a parseable rating or review date, so strict filters can exclude them.
                                     </p>
